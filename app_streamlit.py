@@ -8,9 +8,6 @@ import datetime # Para gerar carimbo de data/hora nos nomes dos arquivos
 import smtplib
 from email.message import EmailMessage
 
-# Para verificar a versão do Python (ajuda no debug)
-import sys
-
 # Adicione estas duas linhas aqui para o SQLite e JSON:
 import sqlite3 # Para organizar os dados da triagem
 import json    # Para guardar os dados de forma que o computador entenda
@@ -364,67 +361,70 @@ def get_single_report_from_db(report_id):
     return {}, ""
 
 
-# --- LÓGICA DE AUTENTICAÇÃO ---
-def password_entered():
-    """Checks whether a password entered by the user is correct."""
-    # Estes valores são acessados através das chaves definidas nos text_input
-    entered_username = st.session_state.get("username_input_sidebar", "")
-    entered_password = st.session_state.get("password_input_sidebar", "")
-
-    if (entered_username == ADMIN_USERNAME_SECRET and
-            entered_password == ADMIN_PASSWORD_SECRET):
-        st.session_state["logged_in"] = True
-        st.success("Login realizado com sucesso! Bem-vinda, Carla.")
-        # O rerun é feito no fluxo principal para avoid loop de login
-    else:
-        st.session_state["logged_in"] = False
-        st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
-    st.rerun() # Adicionado para forçar atualização da UI após tentativa de login
-
-
 # --- Lógica do Streamlit App Principal ---
 st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
-# --- Autenticação sempre visível na barra lateral ---
+# Inicializa o estado de logado
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
-if not st.session_state["logged_in"]:
-    st.sidebar.subheader("Login para Acesso Restrito")
-    st.sidebar.text_input("Usuário", key="username_input_sidebar")
-    st.sidebar.text_input("Senha", type="password", key="password_input_sidebar")
-    if st.sidebar.button("Entrar", key="login_button_sidebar"):
-        password_entered()
-    st.stop() # Interrompe a execução aqui até o login ser bem-sucedido
-
-
-# Se o código chegou até aqui, significa que o usuário está logado
-st.sidebar.success("Logado! Bem-vindo(a).") # Mensagem de sucesso após login.
-if st.sidebar.button("Sair", key="logout_button"): # Adicionar botão de logout
-    st.session_state["logged_in"] = False
-    st.session_state.clear() # Limpa o estado da sessão
-    st.experimental_rerun() # Força o rerun completo
-
-
-# --- Lógica de Navegação e Conteúdo de Páginas (Após Login) ---
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "Triagem Inicial" # Página padrão após login
-
+# --- Configuração e Exibição do Menu Lateral ---
 st.sidebar.title("Navegação REDE ELLe")
 
-# Ambas as opções visíveis após login
-page_options = ["Triagem Inicial", "Visualizar Relatórios"]
-selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page)) # Mantém a página atual selecionada
+# Lógica condicional para o menu de navegação e login na barra lateral
+page_options = ["Triagem Inicial"] # Triagem é sempre uma opção
+
+# Se o usuário NÃO estiver logado, exibe os campos de login
+if not st.session_state["logged_in"]:
+    st.sidebar.subheader("Login para Acesso Restrito")
+    username_input = st.sidebar.text_input("Usuário", key="username_input_sidebar")
+    password_input = st.sidebar.text_input("Senha", type="password", key="password_input_sidebar")
+    
+    if st.sidebar.button("Entrar"):
+        if (username_input == ADMIN_USERNAME_SECRET and
+                password_input == ADMIN_PASSWORD_SECRET):
+            st.session_state["logged_in"] = True
+            st.success("Login realizado com sucesso! Você pode acessar 'Visualizar Relatórios'.")
+            st.rerun() # Força rerun para atualizar a interface (exibir a opção de Relatórios)
+        else:
+            st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
+            st.rerun() # Força rerun para mostrar o erro e manter campos de login
+    
+    # Se ainda não estiver logado, não adiciona "Visualizar Relatórios" nas opções de navegação
+
+else: # Se o usuário ESTIVER logado
+    page_options.append("Visualizar Relatórios") # Adiciona a opção de relatórios APENAS se logado
+    st.sidebar.success("Logado! Bem-vindo(a).")
+    if st.sidebar.button("Sair", key="logout_button"):
+        st.session_state["logged_in"] = False
+        st.session_state.clear() # Limpa o estado da sessão completamente ao deslogar
+        st.rerun() # Recarrega o app para mostrar a tela de login novamente
+
+
+# Seleção da página principal, após o login/não-login ter sido tratado
+# Garante que a página selecionada inicial seja sempre 'Triagem Inicial' se não logado
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Triagem Inicial"
+
+# Se o usuário tentar acessar "Visualizar Relatórios" sem estar logado, força ele pra Triagem
+# Isso previne que ele "pule" a tela de login clicando diretamente na opção de relatórios se por acaso ela estivesse visível por algum bug de estado
+if "Visualizar Relatórios" in page_options: # Só permite selecionar "Visualizar Relatórios" se ela for uma opção disponível (ou seja, se estiver logado)
+    selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page) if st.session_state.current_page in page_options else 0)
+else: # Se não estiver logado, a única opção é Triagem Inicial
+    selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=0)
+    
 st.session_state.current_page = selected_page
 
 
 # --- Renderização das Páginas ---
+
+# Página de Triagem Inicial (SEMPRE PÚBLICA E ACESSÍVEL)
 if st.session_state.current_page == "Triagem Inicial":
     # Inicializar o estado da sessão para a Triagem
-    # Note: O st.session_state.current_step é para o fluxo interno da triagem
-    if 'triagem_step' not in st.session_state: # Use um nome diferente para evitar conflito com a navegação principal
-        st.session_state.triagem_step = 'consent'
+    # Note: Use um nome diferente (como triagem_flow_state) para evitar conflito com a navegação principal
+    if 'triagem_flow_state' not in st.session_state:
+        st.session_state.triagem_flow_state = 'consent'
         st.session_state.dados_paciente = {}
         st.session_state.current_question_index = 0
         st.session_state.chat_history = []
@@ -432,16 +432,16 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.report_content_for_email = None
 
     # Etapa de Consentimento
-    if st.session_state.triagem_step == 'consent':
+    if st.session_state.triagem_flow_state == 'consent':
       st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
       st.markdown(TERMO_CONSENTIMENTO)
       if st.button("Eu concordo e quero iniciar a triagem"):
-        st.session_state.triagem_step = 'initial_greeting'
-        st.session_state.chat_history.append({"speaker": "IA", "text": "Oi. Aqui é seu espaço de escuta sem julgamento e com acolhimento. Como se sente hoje?"})
+        st.session_state.triagem_flow_state = 'initial_greeting'
+        st.session_state.chat_history = [] # Limpa histórico para nova triagem
         st.rerun()
 
     # Etapa de Saudação Inicial
-    elif st.session_state.triagem_step == 'initial_greeting':
+    elif st.session_state.triagem_flow_state == 'initial_greeting':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
@@ -454,11 +454,11 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text})
         
         st.session_state.chat_history.append({"speaker": "IA", "text": "Aqui vamos iniciar o recode, para entender melhor o que se passa com você, então farei algumas perguntas, e sinta-se livre para responder quanto e como quiser."})
-        st.session_state.triagem_step = 'triagem_questions'
+        st.session_state.triagem_flow_state = 'triagem_questions'
         st.rerun()
 
     # Etapa de Perguntas da Triagem
-    elif st.session_state.triagem_step == 'triagem_questions':
+    elif st.session_state.triagem_flow_state == 'triagem_questions':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
@@ -467,7 +467,7 @@ if st.session_state.current_page == "Triagem Inicial":
           st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
           st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
           st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-          st.session_state.triagem_step = 'generate_report'
+          st.session_state.triagem_flow_state = 'generate_report'
           st.rerun()
         else:
           current_question = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
@@ -495,26 +495,25 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-        st.session_state.triagem_step = 'generate_report'
+        st.session_state.triagem_flow_state = 'generate_report'
         st.rerun()
 
     # Etapa de Geração e Salvamento do Relatório
-    elif st.session_state.triagem_step == 'generate_report':
+    elif st.session_state.triagem_flow_state == 'generate_report':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
       relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
         
       # Prepara o corpo do email, garantindo que nunca seja None
-      # Isso agora é feito ANTES de chamar send_report_email
       email_to_send_body = ""
       if relatorio_gerado:
           email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
-      else:
-          email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, verifique a aplicação Streamlit."
+      else: # Se a IA falhar em gerar o relatório, informa o usuário e prepara um corpo de email padrão
           st.error("Desculpe, não foi possível gerar o relatório completo neste momento (erro da IA).")
-
-      st.session_state.report_content_for_email = email_to_send_body # Define o conteúdo no session_state
+          email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, verifique a aplicação Streamlit."
+          
+      st.session_state.report_content_for_email = email_to_send_body
 
       email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
       
@@ -525,29 +524,28 @@ if st.session_state.current_page == "Triagem Inicial":
       else:
           st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
 
-      # Salva o relatório nos arquivos e no DB (passando o raw_generated_report_content e o email_to_send_body compilado!)
-      # Usamos raw_generated_report_content para o DB porque queremos só o texto 'puro' da IA ali
+      # Salva o relatório nos arquivos e no DB
       st.session_state.report_filepath, _ = \
-          save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body) # Passa o email_to_send_body aqui
+          save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body)
 
       with st.spinner("A IA está elaborando a mensagem final para você..."):
           patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
       st.write(f"\n**IA**: {patient_summary_final}")
       
       st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
-      st.session_state.triagem_step = 'finished'
+      st.session_state.triagem_flow_state = 'finished'
       st.rerun()
 
     # Etapa Final (para que a barra de input não apareça depois de terminar)
-    elif st.session_state.triagem_step == 'finished':
+    elif st.session_state.triagem_flow_state == 'finished':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
       st.markdown("--- **Sessão Concluída** ---")
       st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5) ou selecione 'Triagem Inicial' no menu.")
 
-
-# --- Página de Visualizar Relatórios (Acesso Protegido) ---
+# --- Página de Visualizar Relatórios (Acesso Protegido, SÓ ACESSÍVEL SE LOGADO) ---
 elif st.session_state.current_page == "Visualizar Relatórios":
+    # Este bloco só é acessado se o usuário JÁ ESTIVER logado.
     st.header("Relatórios de Triagem da REDE ELLe (Acesso Restrito)")
     st.write("Aqui você pode visualizar todos os relatórios de triagem salvos.")
 
@@ -567,39 +565,41 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         
         df = pd.DataFrame(display_data)
 
-        st.dataframe(df, use_container_width=True, hide_index=False) # Mudado para não esconder o índice por ser o ID
+        st.dataframe(df, use_container_width=True, hide_index=False)
         
         st.subheader("Visualizar Detalhes do Relatório")
         
-        # Garante que min_value começa com 1 se houver relatórios, ou 0 se não.
-        min_report_id = reports_list[-1][0] if reports_list else 1 # Pega o último ID (mais antigo)
-        max_report_id = reports_list[0][0] if reports_list else 1 # Pega o primeiro ID (mais recente)
+        min_report_id = reports_list[-1][0] if reports_list else 1
+        max_report_id = reports_list[0][0] if reports_list else 1
+
+        # Garante que o slider de ID comece com um valor válido
+        if 'report_id_input' not in st.session_state or st.session_state.report_id_input < min_report_id or st.session_state.report_id_input > max_report_id:
+            st.session_state.report_id_input = max_report_id # Default para o mais recente
 
         report_to_view_id = st.number_input(
             "Digite o ID do relatório para visualizar os detalhes:", 
-            min_value=min_report_id if reports_list else 1, # Se houver relatórios, começa com o menor ID disponível
-            max_value=max_report_id if reports_list else 1, # Se houver relatórios, vai até o maior ID disponível
-            value=max_report_id if reports_list else 1, # Default é o maior ID
+            min_value=min_report_id, 
+            max_value=max_report_id, 
+            value=st.session_state.report_id_input, # Usa o valor do session_state
             format="%d", 
             key="report_id_input"
         )
         
-        # Botões de navegação
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Relatório Anterior", key="prev_report_button"):
                 if report_to_view_id > min_report_id:
                     report_to_view_id -= 1
-                    st.session_state.report_id_input = report_to_view_id # Atualiza o input
+                    st.session_state.report_id_input = report_to_view_id
                     st.rerun()
         with col2:
             if st.button("Próximo Relatório", key="next_report_button"):
                 if report_to_view_id < max_report_id:
                     report_to_view_id += 1
-                    st.session_state.report_id_input = report_to_view_id # Atualiza o input
+                    st.session_state.report_id_input = report_to_view_id
                     st.rerun()
 
-        if st.button("Ver Detalhes do Relatório", key="view_report_button"):
+        if st.button("Ver Detalhes do Relatório", key="view_report_button_final"): # ID único para o botão
             if report_to_view_id:
                 patient_data_full, generated_report_full = get_single_report_from_db(report_to_view_id)
                 if patient_data_full:
