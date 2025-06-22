@@ -1,0 +1,5 @@
+.env
+*.db
+relatorios_triagem/
+__pycache__/
+.streamlit/
