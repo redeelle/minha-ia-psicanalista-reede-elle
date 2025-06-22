@@ -2,38 +2,53 @@ import os
 import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
-import datetime
-import sqlite3
-import json
+import datetime # Para gerar carimbo de data/hora nos nomes dos arquivos
+
+# Para envio de e-mail
 import smtplib
 from email.message import EmailMessage
 
+# Para verificar a versão do Python (ajuda no debug)
+import sys
+
+# Adicione estas duas linhas aqui para o SQLite e JSON:
+import sqlite3 # Para organizar os dados da triagem
+import json    # Para guardar os dados de forma que o computador entenda
+
 # --- Configuração Inicial ---
+# Carregar as variáveis de ambiente do arquivo .env
 load_dotenv()
 
+# Inicializar o cliente da OpenAI com sua chave de API
+# A API Key será lida do .env localmente ou dos Streamlit Secrets em produção
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Configuração do Banco de Dados SQLite
-DB_NAME = "redeelle_relatorios.db"
+# --- Configuração da Gaveta de Relatórios (Banco de Dados SQLite) ---
+DB_NAME = "redeelle_relatorios.db" # Nome do arquivo do nosso "caderno organizado"
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME) # Conecta ou cria o arquivo do caderno
     cursor = conn.cursor()
+    # Pede para criar uma "folha" dentro do caderno, se ela não existir
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            patient_name_for_file TEXT,
-            patient_data TEXT NOT NULL,
-            generated_report TEXT NOT NULL,
-            risk_alert TEXT,
-            email_sent INTEGER
+            id INTEGER PRIMARY KEY AUTOINCREMENT,         -- Número único para cada relatório
+            timestamp TEXT NOT NULL,                      -- Quando foi feito o relatório
+            patient_name_for_file TEXT,                   -- Nome anônimo do paciente para o arquivo
+            patient_data TEXT NOT NULL,                   -- Todas as perguntas e respostas (como guardamos agora)
+            generated_report TEXT NOT NULL,               -- O relatório que a IA gerou
+            risk_alert TEXT,                              -- Se teve alerta de risco (suicídio/homicídio)
+            email_sent INTEGER                            -- Se o e-mail foi enviado (0 para não, 1 para sim)
         );
     """)
-    conn.commit()
-    conn.close()
+    conn.commit() # Salva as mudanças na folha
+    conn.close()  # Fecha o caderno
 
+# Chamamos a função para arrumar o caderno assim que o aplicativo começa
 init_db()
+
+# --- Fim da Configuração da Gaveta de Relatórios ---
+
 
 # Obter credenciais de e-mail do ambiente
 SENDER_EMAIL = os.getenv("EMAIL_ADDRESS")
@@ -114,10 +129,11 @@ def compile_full_report_text(patient_data, generated_report_content):
             full_report_text += f"- {question_key}: {response_value}\n"
     full_report_text += "\n---\n\n"
     full_report_text += "## EXAME PSÍQUICO com devolutiva Psicanalítica (Gerado pela IA):\n"
+    # Adicionada verificação para garantir que generated_report_content não seja None antes de concatenar
     if generated_report_content:
         full_report_text += generated_report_content
     else:
-        full_report_text += "Relatório da IA não pôde ser gerado devido a erro.\n"
+        full_report_text += "Relatório da IA não pôde ser gerado devido a erro ou conteúdo vazio.\n"
     full_report_text += "\n---\n"
     full_report_text += "Sessão finalizada com sucesso.\n"
     return full_report_text
@@ -290,14 +306,17 @@ def send_report_email(subject, body, filepath=None):
     return False
 
   msg = EmailMessage()
-  if not body:
+  # GARANTIR: Converte o corpo do e-mail para string, mesmo se for None, para evitar TypeError/KeyError
+  body_as_string = str(body) if body is not None else "" 
+  
+  if not body_as_string.strip(): # Verifica se o corpo é vazio ou só espaços em branco
       st.error("O corpo do e-mail está vazio ou inválido. O envio foi abortado.")
       return False
 
   msg['Subject'] = subject
   msg['From'] = SENDER_EMAIL
   msg['To'] = RECEIVER_EMAIL
-  msg.set_content(body)
+  msg.set_content(body_as_string) # Usa a versão segura do corpo do e-mail
 
   if filepath and os.path.exists(filepath):
     import mimetypes
@@ -346,69 +365,66 @@ def get_single_report_from_db(report_id):
 
 
 # --- LÓGICA DE AUTENTICAÇÃO ---
-def check_password_and_display_sidebar():
-    """
-    Controla o login e a exibição da barra lateral. Retorna a seleção da página
-    ou interrompe a execução se não estiver logado.
-    """
-    if "logged_in" not in st.session_state:
+def password_entered():
+    """Checks whether a password entered by the user is correct."""
+    # Estes valores são acessados através das chaves definidas nos text_input
+    entered_username = st.session_state.get("username_input_sidebar", "")
+    entered_password = st.session_state.get("password_input_sidebar", "")
+
+    if (entered_username == ADMIN_USERNAME_SECRET and
+            entered_password == ADMIN_PASSWORD_SECRET):
+        st.session_state["logged_in"] = True
+        st.success("Login realizado com sucesso! Bem-vinda, Carla.")
+        # O rerun é feito no fluxo principal para avoid loop de login
+    else:
         st.session_state["logged_in"] = False
-
-    # Sempre exibe os campos de login se não estiver logado
-    if not st.session_state["logged_in"]:
-        st.sidebar.subheader("Login - Acesso aos Relatórios")
-        username_input = st.sidebar.text_input("Usuário", key="username")
-        password_input = st.sidebar.text_input("Senha", type="password", key="password")
-
-        if st.sidebar.button("Entrar"):
-            if (username_input == ADMIN_USERNAME_SECRET and
-                    password_input == ADMIN_PASSWORD_SECRET):
-                st.session_state["logged_in"] = True
-                st.success("Login realizado com sucesso! Bem-vinda, Carla.")
-                st.rerun() # Recarregar para mostrar as opções logado
-            else:
-                st.session_state["logged_in"] = False
-                st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
-        
-        # Interrompe a execução aqui se o usuário não estiver logado
-        # e ainda não tivermos completado o login
-        st.stop()
+        st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
+    st.rerun() # Adicionado para forçar atualização da UI após tentativa de login
 
 
 # --- Lógica do Streamlit App Principal ---
 st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
-# A TRIAGEM SEMPRE COMEÇA ABERTA PARA O PÚBLICO
-# O LOGIN SÓ PRECISA SER FEITO PARA ACESSAR OS RELATÓRIOS
-# O estado 'page_selection' será definido depois que soubermos se está logado ou não.
+# --- Autenticação sempre visível na barra lateral ---
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
 
-# Inicializa 'page_selection' para evitar erros na primeira execução
-if 'page_selection' not in st.session_state:
-    st.session_state.page_selection = "Triagem Inicial"
+if not st.session_state["logged_in"]:
+    st.sidebar.subheader("Login para Acesso Restrito")
+    st.sidebar.text_input("Usuário", key="username_input_sidebar")
+    st.sidebar.text_input("Senha", type="password", key="password_input_sidebar")
+    if st.sidebar.button("Entrar", key="login_button_sidebar"):
+        password_entered()
+    st.stop() # Interrompe a execução aqui até o login ser bem-sucedido
 
-# Se o usuário tentar acessar "Visualizar Relatórios" sem estar logado,
-# ou se ele estiver deslogado, vai para a Triagem para evitar erros.
-if st.session_state.page_selection == "Visualizar Relatórios" and not st.session_state.get("logged_in"):
-    st.session_state.page_selection = "Triagem Inicial"
 
+# Se o código chegou até aqui, significa que o usuário está logado
+st.sidebar.success("Logado! Bem-vindo(a).") # Mensagem de sucesso após login.
+if st.sidebar.button("Sair", key="logout_button"): # Adicionar botão de logout
+    st.session_state["logged_in"] = False
+    st.session_state.clear() # Limpa o estado da sessão
+    st.experimental_rerun() # Força o rerun completo
+
+
+# --- Lógica de Navegação e Conteúdo de Páginas (Após Login) ---
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Triagem Inicial" # Página padrão após login
 
 st.sidebar.title("Navegação REDE ELLe")
 
-# A página de visualização de relatórios SÓ FICA VISÍVEL se logado
-page_options = ["Triagem Inicial"]
-if st.session_state.get("logged_in"):
-    page_options.append("Visualizar Relatórios")
-
-selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio")
-st.session_state.page_selection = selected_page
+# Ambas as opções visíveis após login
+page_options = ["Triagem Inicial", "Visualizar Relatórios"]
+selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page)) # Mantém a página atual selecionada
+st.session_state.current_page = selected_page
 
 
-# --- Página de Triagem Inicial ---
-if st.session_state.page_selection == "Triagem Inicial":
+# --- Renderização das Páginas ---
+if st.session_state.current_page == "Triagem Inicial":
     # Inicializar o estado da sessão para a Triagem
-    if 'current_step' not in st.session_state:
-        st.session_state.current_step = 'consent'
+    # Note: O st.session_state.current_step é para o fluxo interno da triagem
+    if 'triagem_step' not in st.session_state: # Use um nome diferente para evitar conflito com a navegação principal
+        st.session_state.triagem_step = 'consent'
         st.session_state.dados_paciente = {}
         st.session_state.current_question_index = 0
         st.session_state.chat_history = []
@@ -416,16 +432,16 @@ if st.session_state.page_selection == "Triagem Inicial":
         st.session_state.report_content_for_email = None
 
     # Etapa de Consentimento
-    if st.session_state.current_step == 'consent':
+    if st.session_state.triagem_step == 'consent':
       st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
       st.markdown(TERMO_CONSENTIMENTO)
       if st.button("Eu concordo e quero iniciar a triagem"):
-        st.session_state.current_step = 'initial_greeting'
+        st.session_state.triagem_step = 'initial_greeting'
         st.session_state.chat_history.append({"speaker": "IA", "text": "Oi. Aqui é seu espaço de escuta sem julgamento e com acolhimento. Como se sente hoje?"})
         st.rerun()
 
     # Etapa de Saudação Inicial
-    elif st.session_state.current_step == 'initial_greeting':
+    elif st.session_state.triagem_step == 'initial_greeting':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
@@ -438,11 +454,11 @@ if st.session_state.page_selection == "Triagem Inicial":
         st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text})
         
         st.session_state.chat_history.append({"speaker": "IA", "text": "Aqui vamos iniciar o recode, para entender melhor o que se passa com você, então farei algumas perguntas, e sinta-se livre para responder quanto e como quiser."})
-        st.session_state.current_step = 'triagem_questions'
+        st.session_state.triagem_step = 'triagem_questions'
         st.rerun()
 
     # Etapa de Perguntas da Triagem
-    elif st.session_state.current_step == 'triagem_questions':
+    elif st.session_state.triagem_step == 'triagem_questions':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
@@ -451,7 +467,7 @@ if st.session_state.page_selection == "Triagem Inicial":
           st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
           st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
           st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-          st.session_state.current_step = 'generate_report'
+          st.session_state.triagem_step = 'generate_report'
           st.rerun()
         else:
           current_question = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
@@ -479,65 +495,66 @@ if st.session_state.page_selection == "Triagem Inicial":
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-        st.session_state.current_step = 'generate_report'
+        st.session_state.triagem_step = 'generate_report'
         st.rerun()
 
     # Etapa de Geração e Salvamento do Relatório
-    elif st.session_state.current_step == 'generate_report':
+    elif st.session_state.triagem_step == 'generate_report':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
       relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
         
+      # Prepara o corpo do email, garantindo que nunca seja None
+      # Isso agora é feito ANTES de chamar send_report_email
+      email_to_send_body = ""
       if relatorio_gerado:
-          st.session_state.report_content_for_email = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
-          
-          email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
-          email_body = st.session_state.report_content_for_email
-          
-          email_successfully_sent = send_report_email(email_subject, email_body)
-          
-          if email_successfully_sent: 
-              st.success("Relatório gerado e enviado para seu e-mail!")
-          else:
-              st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
-
-          st.session_state.report_filepath, _ = \
-              save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, st.session_state.report_content_for_email)
-
-          with st.spinner("A IA está elaborando a mensagem final para você..."):
-              patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
-          st.write(f"\n**IA**: {patient_summary_final}")
-          
+          email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
       else:
-          st.error("Desculpe, não foi possível gerar o relatório completo neste momento. Por favor, tente novamente mais tarde.")
+          email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, verifique a aplicação Streamlit."
+          st.error("Desculpe, não foi possível gerar o relatório completo neste momento (erro da IA).")
+
+      st.session_state.report_content_for_email = email_to_send_body # Define o conteúdo no session_state
+
+      email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+      
+      email_successfully_sent = send_report_email(email_subject, email_to_send_body)
+      
+      if email_successfully_sent: 
+          st.success("Relatório gerado e enviado para seu e-mail!")
+      else:
+          st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
+
+      # Salva o relatório nos arquivos e no DB (passando o raw_generated_report_content e o email_to_send_body compilado!)
+      # Usamos raw_generated_report_content para o DB porque queremos só o texto 'puro' da IA ali
+      st.session_state.report_filepath, _ = \
+          save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body) # Passa o email_to_send_body aqui
+
+      with st.spinner("A IA está elaborando a mensagem final para você..."):
+          patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
+      st.write(f"\n**IA**: {patient_summary_final}")
       
       st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
-      st.session_state.current_step = 'finished'
+      st.session_state.triagem_step = 'finished'
       st.rerun()
 
     # Etapa Final (para que a barra de input não apareça depois de terminar)
-    elif st.session_state.current_step == 'finished':
+    elif st.session_state.triagem_step == 'finished':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
       st.markdown("--- **Sessão Concluída** ---")
-      st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5).")
+      st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5) ou selecione 'Triagem Inicial' no menu.")
+
 
 # --- Página de Visualizar Relatórios (Acesso Protegido) ---
-elif st.session_state.page_selection == "Visualizar Relatórios":
-    # Display login fields *before* any content for this page is shown if not logged in
-    # This also calls st.stop() if login is not successful, preventing leakage
-    check_password_and_display_sidebar() # <--- CHAMANDO AQUI. Se não logar, st.stop() será executado e o código daqui pra baixo não roda
-
-    # Se o código chegou até aqui, significa que o check_password_and_display_sidebar() retornou True,
-    # ou seja, o usuário está logado.
+elif st.session_state.current_page == "Visualizar Relatórios":
     st.header("Relatórios de Triagem da REDE ELLe (Acesso Restrito)")
     st.write("Aqui você pode visualizar todos os relatórios de triagem salvos.")
 
     reports_list = get_reports_from_db()
 
     if reports_list:
-        import pandas as pd # Importa pandas aqui para garantir que esteja disponível
+        import pandas as pd
         display_data = [] 
         for report_id, timestamp, patient_name, risk_alert, email_sent in reports_list:
             display_data.append({
@@ -550,10 +567,37 @@ elif st.session_state.page_selection == "Visualizar Relatórios":
         
         df = pd.DataFrame(display_data)
 
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=False) # Mudado para não esconder o índice por ser o ID
         
         st.subheader("Visualizar Detalhes do Relatório")
-        report_to_view_id = st.number_input("Digite o ID do relatório para visualizar os detalhes:", min_value=1, format="%d", key="report_id_input")
+        
+        # Garante que min_value começa com 1 se houver relatórios, ou 0 se não.
+        min_report_id = reports_list[-1][0] if reports_list else 1 # Pega o último ID (mais antigo)
+        max_report_id = reports_list[0][0] if reports_list else 1 # Pega o primeiro ID (mais recente)
+
+        report_to_view_id = st.number_input(
+            "Digite o ID do relatório para visualizar os detalhes:", 
+            min_value=min_report_id if reports_list else 1, # Se houver relatórios, começa com o menor ID disponível
+            max_value=max_report_id if reports_list else 1, # Se houver relatórios, vai até o maior ID disponível
+            value=max_report_id if reports_list else 1, # Default é o maior ID
+            format="%d", 
+            key="report_id_input"
+        )
+        
+        # Botões de navegação
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Relatório Anterior", key="prev_report_button"):
+                if report_to_view_id > min_report_id:
+                    report_to_view_id -= 1
+                    st.session_state.report_id_input = report_to_view_id # Atualiza o input
+                    st.rerun()
+        with col2:
+            if st.button("Próximo Relatório", key="next_report_button"):
+                if report_to_view_id < max_report_id:
+                    report_to_view_id += 1
+                    st.session_state.report_id_input = report_to_view_id # Atualiza o input
+                    st.rerun()
 
         if st.button("Ver Detalhes do Relatório", key="view_report_button"):
             if report_to_view_id:
