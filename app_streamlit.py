@@ -66,7 +66,7 @@ Este uso é de natureza estritamente experimental. A IA não substitui o atendim
 3. Responsabilidade e supervisão clínica:
 Todas as interações serão acompanhadas pela profissional responsável, garantindo um ambiente ético, cuidadoso e protegido. Nenhum conteúdo será compartilhado fora do escopo deste projeto sem novo consentimento formal por escrito.
 4. Quebra de sigilo:
-A quebra de sigilo será feita em caso de falas sobre suicídio e omicídio do escutado.
+A quebra de sigilo será feita em caso de falas sobre suicídio e homícidio do escutado.
 5. Limitações da plataforma utilizada:
 A empresa responsável pela tecnologia da IA, no possui acesso direto aos conteúdos gerados nesta experiência e não se responsabiliza pelo uso clínico realizado por terceiros. O conteúdo das respostas é baseado em algoritmos de predição de linguagem natural, no se tratando de orientação psicológica ou médica.
 6. Direito de retirada:
@@ -120,7 +120,8 @@ def compile_full_report_text(patient_data, generated_report_content):
     full_report_text = f"--- RELATÓRIO DE TRIAGEM REDE ELLe - {timestamp_for_report} ---\n\n"
     full_report_text += "## Dados Coletados na Triagem:\n"
     for question_key, response_value in patient_data.items():
-        full_report_text += f"{question_key}: {response_value}\n"
+        if isinstance(question_key, str) and isinstance(response_value, str): # Garantir que são strings
+            full_report_text += f"{question_key}: {response_value}\n"
     full_report_text += "\n---\n\n"
     full_report_text += "## EXAME PSÍQUICO com devolutiva Psicanalítica (Gerado pela IA):\n"
     if generated_report_content:
@@ -166,7 +167,7 @@ def get_triagem_reflection(patient_answer):
   """
   try:
     response = client.chat.completions.create(
-      model="gpt-3.5-turbo", # Modelo mais econômico para reflexões curtas
+      model="gpt-3.5-turbo", # Modelo mais económico para reflexões curtas
       messages=[
         {"role": "system", "content": "Você é um assistente de IA da REDE ELLe, praticando a escuta ampliada. Após cada resposta do participante, ofereça uma breve e humana validação (1-2 frases, máximo 25 palavras) que reconheça a importância do que foi compartilhado, incentivando a continuidade da narrativa, sem emitir julgamentos."},
         {"role": "user", "content": f"O participante acabou de responder: '{patient_answer}'. Como você responderia de forma empática antes de fazer a próxima pergunta?"}
@@ -188,7 +189,8 @@ def get_final_patient_summary(dados_paciente_temp):
   # Pegar os dados principais que o paciente trouxe
   for q_key, p_response in dados_paciente_temp.items():
     if "IA: " not in q_key: # Evita pegar as falas da IA no histórico
-      summary_data.append(f"{q_key.replace('Pergunta', 'Em sua resposta sobre ').replace(':', '')}: {p_response}")
+        if isinstance(q_key, str) and isinstance(p_response, str): # Garantir que são strings
+            summary_data.append(f"{q_key.replace('Pergunta', 'Em sua resposta sobre ').replace(':', '')}: {p_response}")
   
   summary_text = "\n".join(summary_data)
 
@@ -215,7 +217,8 @@ def gerar_relatorio_gpt(dados_paciente_temp):
   """
   historico_triagem = "Registro da Triagem:\n"
   for pergunta, resposta in dados_paciente_temp.items():
-    historico_triagem += f"- {pergunta}: {resposta}\n"
+      if isinstance(pergunta, str) and isinstance(resposta, str): # Garantir que são strings
+          historico_triagem += f"- {pergunta}: {resposta}\n"
 
   prompt_para_relatorio = f"""
   Você é uma Inteligência Artificial auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe).
@@ -264,7 +267,7 @@ def gerar_relatorio_gpt(dados_paciente_temp):
     st.warning("Por favor, verifique se sua chave de API está correta e se você tem créditos na OpenAI.")
     return None
 
-def save_report_internally(patient_data, generated_report, email_sent_status, compiled_report_text):
+def save_report_internally(patient_data, raw_generated_report_content, email_sent_status, compiled_report_text_for_file_and_email):
     """
     Função atualizada:
     1. Salva o report_text (já formatado) em um arquivo de texto.
@@ -275,7 +278,7 @@ def save_report_internally(patient_data, generated_report, email_sent_status, co
     patient_name_for_file = "PacienteAnonimo" # Nome padrão para o arquivo
     q1_data = patient_data.get("Pergunta 1: Qual seu nome, idade, whatsapp e cidade?", "")
     if q1_data: # Tenta extrair o nome da primeira pergunta
-        name_parts = q1_data.split(',')[0].strip()
+        name_parts = str(q1_data).split(',')[0].strip() # Converte para str para garantir
         if name_parts:
             # Limpa o nome para que possa ser usado no nome do arquivo
             patient_name_for_file = "".join(c for c in name_parts if c.isalnum() or c == ' ').strip().replace(" ", "_").replace("__", "_")
@@ -292,7 +295,7 @@ def save_report_internally(patient_data, generated_report, email_sent_status, co
 
     # Salva o conteúdo no arquivo de texto
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write(compiled_report_text) # Use o texto já compilado
+        f.write(compiled_report_text_for_file_and_email) # Use o texto já compilado
     
     # --- NOVIDADE: GUARDAR NO CADERNO DIGITAL (SQLite) ---
     conn = sqlite3.connect(DB_NAME) # Conecta ao caderno digital
@@ -312,7 +315,7 @@ def save_report_internally(patient_data, generated_report, email_sent_status, co
         timestamp,
         patient_name_for_file,
         patient_data_json,
-        generated_report, # Gera o raw generated GPT report (sem os metadados do cabeçalho) no DB
+        raw_generated_report_content, # Salva o relatório GPT 'puro' no DB, sem os cabeçalhos extras
         risk_alert_status,
         1 if email_sent_status else 0 # Marca 1 se o e-mail foi enviado, 0 se não
     ))
@@ -320,7 +323,7 @@ def save_report_internally(patient_data, generated_report, email_sent_status, co
     conn.close()  # Fecha o caderno
     # --- FIM DA NOVIDADE ---
 
-    return filepath, compiled_report_text # Devolve o caminho do arquivo e o conteúdo para o e-mail
+    return filepath, compiled_report_text_for_file_and_email # Devolve o caminho do arquivo e o conteúdo para o e-mail
 
 def send_report_email(subject, body, filepath=None):
   """
@@ -331,10 +334,15 @@ def send_report_email(subject, body, filepath=None):
     return False
 
   msg = EmailMessage()
+  
+  if not body: # Adição crucial: verificar se o corpo do email não é None ou vazio antes de setar
+      st.error("O corpo do e-mail está vazio ou inválido. O envio foi abortado.")
+      return False
+
   msg['Subject'] = subject
   msg['From'] = SENDER_EMAIL
   msg['To'] = RECEIVER_EMAIL
-  msg.set_content(body)
+  msg.set_content(body) # Aqui o erro deve ser resolvido, pois 'body' não será None
 
   # Opcional: Anexar o arquivo se for fornecido o caminho
   if filepath and os.path.exists(filepath):
@@ -366,140 +374,221 @@ def send_report_email(subject, body, filepath=None):
     st.error(f"Erro ao enviar o e-mail: {e}")
     return False
 
+# Adicionadas funções para buscar relatórios do DB
+def get_reports_from_db():
+    conn = sqlite3.connect(DB_NAME) # Conecta ao nosso caderno de relatórios
+    cursor = conn.cursor()
+    # Pega só as informações mais importantes para mostrar na lista
+    cursor.execute("SELECT id, timestamp, patient_name_for_file, risk_alert, email_sent FROM reports ORDER BY timestamp DESC")
+    reports_data = cursor.fetchall() # Pega todos os relatórios
+    conn.close()
+    return reports_data
+
+def get_single_report_from_db(report_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT patient_data, generated_report FROM reports WHERE id = ?", (report_id,))
+    report_detail = cursor.fetchone()
+    conn.close()
+    if report_detail:
+        # report_detail[0] é o JSON com os dados do paciente, report_detail[1] é o relatório GPT
+        return json.loads(report_detail[0]), report_detail[1] 
+    return {}, "" # Retorna dicionário vazio e string vazia se não encontrar
+
+
 # --- Lógica do Streamlit App ---
 
 st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
-# Inicializar o estado da sessão (CORREÇÃO DE st.session_session_state para st.session_state)
-if 'current_step' not in st.session_state:
-  st.session_state.current_step = 'consent' # Estado inicial: pedir consentimento
-  st.session_state.dados_paciente = {} # Armazena as respostas da triagem
-  st.session_state.current_question_index = 0 # Índice da pergunta atual
-  st.session_state.chat_history = [] # Para exibir a conversa
-  st.session_state.report_filepath = None # Para armazenar o caminho do relatório salvo
-  st.session_state.report_content_for_email = None # Para armazenar o conteúdo do relatório para email
+# Crie a barra lateral para navegação
+st.sidebar.title("Navegação REDE ELLe")
+# Uma caixa de seleção na barra lateral para escolher a página
+page_selection = st.sidebar.radio("Escolha uma opção:", ["Triagem Inicial", "Visualizar Relatórios"])
 
-# --- Etapa de Consentimento ---
-if st.session_state.current_step == 'consent':
-  st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
-  st.markdown(TERMO_CONSENTIMENTO)
-  if st.button("Eu concordo e quero iniciar a triagem"):
-    st.session_state.current_step = 'initial_greeting'
-    st.session_state.chat_history.append({"speaker": "IA", "text": "Oi. Aqui é seu espaço de escuta sem julgamento e com acolhimento. Como se sente hoje?"})
-    st.rerun()
 
-# --- Etapa de Saudação Inicial ---
-elif st.session_state.current_step == 'initial_greeting':
-  for chat in st.session_state.chat_history:
-    st.write(f"**{chat['speaker']}**: {chat['text']}")
+# Início do bloco de código para a página de Triagem
+if page_selection == "Triagem Inicial":
+    # Inicializar o estado da sessão (CORREÇÃO DE st.session_session_state para st.session_state)
+    if 'current_step' not in st.session_state:
+      st.session_state.current_step = 'consent' # Estado inicial: pedir consentimento
+      st.session_state.dados_paciente = {} # Armazena as respostas da triagem
+      st.session_state.current_question_index = 0 # Índice da pergunta atual
+      st.session_state.chat_history = [] # Para exibir a conversa
+      st.session_state.report_filepath = None # Para armazenar o caminho do relatório salvo
+      st.session_state.report_content_for_email = None # Para armazenar o conteúdo do relatório para email
 
-  user_input = st.text_input("Paciente:", key="initial_feeling_input")
-  if user_input:
-    st.session_state.dados_paciente['sentimento_inicial'] = user_input
-    st.session_state.chat_history.append({"speaker": "Paciente", "text": user_input})
-    
-    # Gerar reflexão mais elaborada
-    reflection_text = get_emotional_reflection(user_input)
-    st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text})
-    
-    st.session_state.chat_history.append({"speaker": "IA", "text": "Aqui vamos iniciar o recode, para entender melhor o que se passa com você, então farei algumas perguntas, e sinta-se livre para responder quanto e como quiser."})
-    st.session_state.current_step = 'triagem_questions'
-    st.rerun()
-
-# --- Etapa de Perguntas da Triagem ---
-elif st.session_state.current_step == 'triagem_questions':
-  # Exibi o histórico do chat
-  for chat in st.session_state.chat_history:
-    st.write(f"**{chat['speaker']}**: {chat['text']}")
-
-  if st.session_state.current_question_index <= len(TRIAGEM_PERGUNTAS): # Aumentei o <= para pegar a última pergunta antes do resumo
-    # Verifica se já passamos por todas as perguntas e vamos para o resumo
-    if st.session_state.current_question_index == len(TRIAGEM_PERGUNTAS):
-      # Todas as perguntas foram respondidas, agora exibir o "Agradeço e aguarde"
-      st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
-      st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
-      st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-      st.session_state.current_step = 'generate_report'
-      st.rerun()
-    else: # Ainda há perguntas para fazer
-      current_question = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
-      
-      # Exibe a pergunta atual da IA
-      st.write(f"**IA**: {current_question}")
-      user_response = st.text_input("Paciente:", key=f"question_input_{st.session_state.current_question_index}")
-
-      if user_response:
-        st.session_state.chat_history.append({"speaker": "Paciente", "text": user_response})
-        
-        # Armazenar a pergunta e a resposta
-        st.session_state.dados_paciente[f"Pergunta {st.session_state.current_question_index+1}: {current_question}"] = user_response
-
-        # Checar risco imediato
-        if checar_risco_imediato(user_response):
-          st.warning("!!! ATENÇÃO !!! Foi detectada uma fala relacionada a risco de suicídio ou homicídio.")
-          st.warning("Lembre-se do item 4 do Termo de Consentimento: 'A quebra de sigilo será feita em caso de falas sobre suicídio e homicídio do escutado.' É crucial que você procure ajuda profissional imediata.")
-          st.session_state.dados_paciente["ALERTA_RISCO_IMEDIATO"] = "Sim" # Flag para o relatório
-
-        # Gerar reflexão para a resposta específica da triagem (se não for a última pergunta)
-        if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS) -1: # Para não gerar reflexão depois da última pergunta
-          reflection_triagem = get_triagem_reflection(user_response)
-          st.session_state.chat_history.append({"speaker": "IA", "text": reflection_triagem})
-
-        st.session_state.current_question_index += 1
+    # --- Etapa de Consentimento ---
+    if st.session_state.current_step == 'consent':
+      st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
+      st.markdown(TERMO_CONSENTIMENTO)
+      if st.button("Eu concordo e quero iniciar a triagem"):
+        st.session_state.current_step = 'initial_greeting'
+        st.session_state.chat_history.append({"speaker": "IA", "text": "Oi. Aqui é seu espaço de escuta sem julgamento e com acolhimento. Como se sente hoje?"})
         st.rerun()
-  else: # Esta parte não deveria ser alcançada com a lógica atual ajustada acima, mas mantida para segurança.
-    st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
-    st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
-    st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
-    st.session_state.current_step = 'generate_report'
-    st.rerun()
+
+    # --- Etapa de Saudação Inicial ---
+    elif st.session_state.current_step == 'initial_greeting':
+      for chat in st.session_state.chat_history:
+        st.write(f"**{chat['speaker']}**: {chat['text']}")
+
+      user_input = st.text_input("Paciente:", key="initial_feeling_input")
+      if user_input:
+        st.session_state.dados_paciente['sentimento_inicial'] = user_input
+        st.session_state.chat_history.append({"speaker": "Paciente", "text": user_input})
+        
+        # Gerar reflexão mais elaborada
+        reflection_text = get_emotional_reflection(user_input)
+        st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text})
+        
+        st.session_state.chat_history.append({"speaker": "IA", "text": "Aqui vamos iniciar o recode, para entender melhor o que se passa com você, então farei algumas perguntas, e sinta-se livre para responder quanto e como quiser."})
+        st.session_state.current_step = 'triagem_questions'
+        st.rerun()
+
+    # --- Etapa de Perguntas da Triagem ---
+    elif st.session_state.current_step == 'triagem_questions':
+      # Exibi o histórico do chat
+      for chat in st.session_state.chat_history:
+        st.write(f"**{chat['speaker']}**: {chat['text']}")
+
+      if st.session_state.current_question_index <= len(TRIAGEM_PERGUNTAS): # Aumentei o <= para pegar a última pergunta antes do resumo
+        # Verifica se já passamos por todas as perguntas e vamos para o resumo
+        if st.session_state.current_question_index == len(TRIAGEM_PERGUNTAS):
+          # Todas as perguntas foram respondidas, agora exibir o "Agradeço e aguarde"
+          st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
+          st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
+          st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
+          st.session_state.current_step = 'generate_report'
+          st.rerun()
+        else: # Ainda há perguntas para fazer
+          current_question = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
+          
+          # Exibe a pergunta atual da IA
+          st.write(f"**IA**: {current_question}")
+          user_response = st.text_input("Paciente:", key=f"question_input_{st.session_state.current_question_index}")
+
+          if user_response:
+            st.session_state.chat_history.append({"speaker": "Paciente", "text": user_response})
+            
+            # Armazenar a pergunta e a resposta
+            st.session_state.dados_paciente[f"Pergunta {st.session_state.current_question_index+1}: {current_question}"] = user_response
+
+            # Checar risco imediato
+            if checar_risco_imediato(user_response):
+              st.warning("!!! ATENÇÃO !!! Foi detectada uma fala relacionada a risco de suicídio ou homicídio.")
+              st.warning("Lembre-se do item 4 do Termo de Consentimento: 'A quebra de sigilo será feita em caso de falas sobre suicídio e homicídio do escutado.' É crucial que você procure ajuda profissional imediata.")
+              st.session_state.dados_paciente["ALERTA_RISCO_IMEDIATO"] = "Sim" # Flag para o relatório
+
+            # Gerar reflexão para a resposta específica da triagem (se não for a última pergunta)
+            if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS) -1: # Para não gerar reflexão depois da última pergunta
+              reflection_triagem = get_triagem_reflection(user_response)
+              st.session_state.chat_history.append({"speaker": "IA", "text": reflection_triagem})
+
+            st.session_state.current_question_index += 1
+            st.rerun()
+      else: # Esta parte não deveria ser alcançada com a lógica atual ajustada acima, mas mantida para segurança.
+        st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
+        st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
+        st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
+        st.session_state.current_step = 'generate_report'
+        st.rerun()
 
 
-# --- Etapa de Geração e Salvamento do Relatório ---
-elif st.session_state.current_step == 'generate_report':
-  # Exibi o histórico do chat
-  for chat in st.session_state.chat_history:
-    st.write(f"**{chat['speaker']}**: {chat['text']}")
+    # --- Etapa de Geração e Salvamento do Relatório ---
+    elif st.session_state.current_step == 'generate_report':
+      # Exibi o histórico do chat
+      for chat in st.session_state.chat_history:
+        st.write(f"**{chat['speaker']}**: {chat['text']}")
 
-  # Geração do relatório (chamada à API)
-  relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
-    
-  if relatorio_gerado:
-      # Primeiro: Compila o texto completo do relatório para o e-mail e para salvar no arquivo/DB
-      # Isso garante que st.session_state.report_content_for_email NÃO seja None
-      st.session_state.report_content_for_email = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
-      
-      # Tentar enviar o e-mail
-      email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
-      email_body = st.session_state.report_content_for_email # Agora o corpo do e-mail está preenchido
-      
-      email_successfully_sent = send_report_email(email_subject, email_body) # <--- ESSA LINHA NÃO VAI MAIS BUGA AQUI!
-      
-      if email_successfully_sent: 
-          st.success("Relatório gerado e enviado para seu e-mail!")
+      # Geração do relatório (chamada à API)
+      relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
+        
+      if relatorio_gerado:
+          # Primeiro: Compila o texto completo do relatório para o e-mail e para salvar no arquivo/DB
+          # Isso garante que st.session_state.report_content_for_email NÃO seja None
+          st.session_state.report_content_for_email = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
+          
+          # Tentar enviar o e-mail
+          email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+          email_body = st.session_state.report_content_for_email # Agora o corpo do e-mail está preenchido
+          
+          email_successfully_sent = send_report_email(email_subject, email_body) # <--- ESSA LINHA NÃO VAI MAIS BUGA AQUI!
+          
+          if email_successfully_sent: 
+              st.success("Relatório gerado e enviado para seu e-mail!")
+          else:
+              st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
+
+          # Salvar o relatório nos arquivos e no DB (passando o texto já gerado e o status do e-mail)
+          st.session_state.report_filepath, _ = \
+              save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, st.session_state.report_content_for_email)
+
+          # Mensagem final para o paciente (agora gerada pela IA)
+          with st.spinner("A IA está elaborando a mensagem final para você..."):
+              patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
+          st.write(f"\n**IA**: {patient_summary_final}")
+          
       else:
-          st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
-
-      # Salvar o relatório nos arquivos e no DB (passando o texto já gerado e o status do e-mail)
-      st.session_state.report_filepath, _ = \
-          save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, st.session_state.report_content_for_email)
-
-      # Mensagem final para o paciente (agora gerada pela IA)
-      with st.spinner("A IA está elaborando a mensagem final para você..."):
-          patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
-      st.write(f"\n**IA**: {patient_summary_final}")
+          st.error("Desculpe, não foi possível gerar o relatório completo neste momento. Por favor, tente novamente mais tarde.")
       
-  else:
-      st.error("Desculpe, não foi possível gerar o relatório completo neste momento. Por favor, tente novamente mais tarde.")
-  
-  st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
-  st.session_state.current_step = 'finished' # Marca como concluído
-  st.rerun()
+      st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
+      st.session_state.current_step = 'finished' # Marca como concluído
+      st.rerun()
 
-# --- Etapa Final (para que a barra de input não apareça depois de terminar) ---
-elif st.session_state.current_step == 'finished':
-  for chat in st.session_state.chat_history:
-    st.write(f"**{chat['speaker']}**: {chat['text']}")
-  st.markdown("--- **Sessão Concluída** ---")
-  st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5).")
+    # --- Etapa Final (para que a barra de input não apareça depois de terminar) ---
+    elif st.session_state.current_step == 'finished':
+      for chat in st.session_state.chat_history:
+        st.write(f"**{chat['speaker']}**: {chat['text']}")
+      st.markdown("--- **Sessão Concluída** ---")
+      st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5).")
+
+# Início do bloco de código para a página de Visualizar Relatórios
+elif page_selection == "Visualizar Relatórios":
+    st.header("Relatórios de Triagem da REDE ELLe")
+    st.write("Aqui você pode visualizar todos os relatórios de triagem salvos.")
+
+    # Tenta obter os relatórios do banco de dados
+    reports_list = get_reports_from_db()
+
+    if reports_list:
+        # Cria uma tabela para mostrar os relatórios
+        # A coluna 'id' será escondida ou usada apenas internamente
+        display_data = [] # Lista para os dados que vamos mostrar na tabela
+        for report_id, timestamp, patient_name, risk_alert, email_sent in reports_list:
+            display_data.append({
+                "ID": report_id, # Manter o ID para referência
+                "Data/Hora": datetime.datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%d/%m/%Y %H:%M:%S"),
+                "Paciente (Nome-Arquivo)": patient_name,
+                "Alerta de Risco": risk_alert,
+                "Email Enviado": "Sim" if email_sent == 1 else "Não"
+            })
+        
+        # Converte a lista de dicionários para um DataFrame do Pandas para exibição no Streamlit
+        import pandas as pd
+        df = pd.DataFrame(display_data)
+
+        st.dataframe(df, use_container_width=True, hide_index=True) # Exibir a tabela
+        
+        # Opção para visualizar um relatório específico
+        st.subheader("Visualizar Detalhes do Relatório")
+        report_to_view_id = st.number_input("Digite o ID do relatório para visualizar os detalhes:", min_value=1, format="%d")
+
+        if st.button("Ver Detalhes do Relatório"):
+            if report_to_view_id:
+                patient_data_full, generated_report_full = get_single_report_from_db(report_to_view_id)
+                if patient_data_full:
+                    st.markdown(f"**Detalhes do Relatório ID: {report_to_view_id}**")
+                    st.markdown("**Dados do Paciente (Triagem):**")
+                    # Exibir os dados do paciente de forma organizada
+                    for q, r in patient_data_full.items():
+                        st.write(f"- **{q}**: {r}")
+                    
+                    st.markdown("**Relatório de Exame Psíquico (Gerado pela IA):**")
+                    st.markdown(generated_report_full)
+                else:
+                    st.warning("Relatório não encontrado. Verifique o ID.")
+            else:
+                st.warning("Por favor, insira um ID de relatório para visualizar.")
+
+    else:
+        st.info("Nenhum relatório de triagem encontrado até o momento.")
