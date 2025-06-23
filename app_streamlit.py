@@ -87,7 +87,7 @@ TRIAGEM_PERGUNTAS = [
   "Faz uso de medicações? Se sim, quais e por quanto tempo?",
   "Me conte como foi sua infância:",
   "Como foi e é a sua relação com sua mãe:",
-  "Como foi e é a sua relação com seu pai:",
+  "Como foi e é sua relação com seu pai:",
   "Como foi e é sua relação com seus irmãos:",
   "Como foi ou é sua relação com cônjuge:",
   "Você tem filhos? Como é sua relação com eles?",
@@ -146,10 +146,10 @@ def get_emotional_reflection(feeling_text):
     response = client.chat.completions.create(
       model="gpt-3.5-turbo",
       messages=[
-        {"role": "system", "content": "Você é um assistente de IA com escuta ampliada e acolhimento simbólico. Ao receber o sentimento inicial de um participante, ofereça uma breve reflexão (1-2 frases, máximo 20 palavras) que valide essa expressão, convidando-o sutilmente a um espaço de aprofundamento, sem ser repetitivo ou superficial."},
+        {"role": "system", "content": "Você é um assistente de IA com escuta ampliada e acolhimento simbólico. Ao receber o sentimento inicial de um participante, ofereça uma breve reflexão (1-2 frases, máximo 20 palavras) que valide essa expressão, convidando-o sutilmente a um espaço de aprofundamento. **NÃO faça perguntas, avaliações, ou juízos de valor.**"}, # Reforçada instrução para não julgar
         {"role": "user", "content": f"O participante disse: '{feeling_text}'. Como você o acolheria?"}
       ],
-      temperature=0.8,
+      temperature=0.8, # Mantida esta temperatura.
       max_tokens=60
     )
     return response.choices[0].message.content
@@ -157,15 +157,16 @@ def get_emotional_reflection(feeling_text):
     st.warning(f"Não foi possível obter uma reflexão inicial da IA: {e}")
     return f"Compreendo... É importante reconhecer como você se sente {feeling_text}."
 
-def get_triagem_reflection(patient_answer):
+# --- FUNÇÃO get_triagem_reflection ATUALIZADA E REFORÇADA PARA EVITAR PERGUNTAS DESCONEXAS E JUÍZOS DE VALOR ---
+def get_triagem_reflection(patient_answer, preceding_question): # AGORA recebe a pergunta anterior
   try:
     response = client.chat.completions.create(
       model="gpt-3.5-turbo",
       messages=[
-        {"role": "system", "content": "Você é um assistente de IA da REDE ELLe, praticando a escuta ampliada. Após cada resposta do participante, ofereça uma breve e humana validação (1-2 frases, máximo 25 palavras) que reconheça a importância do que foi compartilhado, incentivando a continuidade da narrativa, sem emitir julgamentos."},
-        {"role": "user", "content": f"O participante acabou de responder: '{patient_answer}'. Como você responderia de forma empática antes de fazer a próxima pergunta?"}
+        {"role": "system", "content": "Você é um assistente de IA da REDE ELLe, praticando a escuta ampliada e simbólica. Sua função é oferecer uma *breve validação neutra e acolhedora* (1-2 frases, máximo 25 palavras) sobre a *última resposta do participante* em relação à *pergunta anterior* feita. **É CRÍTICO: Você NÃO deve fazer NENHUMA PERGUNTA, NEM SUGESTÕES, NEM INTERPRETAÇÕES, NEM COMENTÁRIOS SOBRE SI OU SEUS LIMITES/CAPACIDADES, NEM JUÍZOS DE VALOR ('Que bom que...', 'Sinto muito que...'). Apenas acolha o que foi dito e reconheça a partilha de forma neutra e empática. Exemplos: 'Compreendo. Agradeço sua partilha', 'Sua resposta é um ponto no seu relato.', 'Entendo. Isso faz parte do que está sendo trazido.'. A próxima pergunta da triagem virá automaticamente; sua fala é apenas para sustentar o momento presente.**"}, # Prompt SUPER REFORÇADO E NEUTRO
+        {"role": "user", "content": f"A pergunta anterior foi: '{preceding_question}'. O participante respondeu: '{patient_answer}'. Por favor, ofereça uma reflexão empática e não-diretiva sobre a resposta."}
       ],
-      temperature=0.7,
+      temperature=0.7, # Mantida a temperatura em 0.7 para ser mais "segura" com o prompt restritivo
       max_tokens=70
     )
     return response.choices[0].message.content
@@ -242,7 +243,7 @@ def gerar_relatorio_gpt(dados_paciente_temp):
           {"role": "system", "content": "Você é uma IA assistente psicanalítica, auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe). Seu objetivo é gerar relatórios de triagem detalhados e analíticos para uso profissional."},
           {"role": "user", "content": prompt_para_relatorio}
         ],
-        temperature=0.7,
+        temperature=0.85, # Temperatura ajustada para 0.85 para dar mais simbolismo
         max_tokens=2200
       )
     return resposta_gpt.choices[0].message.content
@@ -365,56 +366,54 @@ def get_single_report_from_db(report_id):
 st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
-# Inicializa o estado de logado
+# --- Lógica de Segurança (Login) ---
+# Inicializa o estado de logado se não existir
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
-# --- Configuração e Exibição do Menu Lateral ---
+# --- Configuração e Exibição do Menu Principal ---
 st.sidebar.title("Navegação REDE ELLe")
 
-# Lógica condicional para o menu de navegação e login na barra lateral
-page_options = ["Triagem Inicial"] # Triagem é sempre uma opção
+# Define as opções de página. 'Visualizar Relatórios' só aparece se logado.
+page_options = ["Triagem Inicial"] 
 
-# Se o usuário NÃO estiver logado, exibe os campos de login
+# Se o usuário NÃO estiver logado, exibe os campos de login na barra lateral e gerencia a tentativa de login
 if not st.session_state["logged_in"]:
     st.sidebar.subheader("Login para Acesso Restrito")
-    username_input = st.sidebar.text_input("Usuário", key="username_input_sidebar")
-    password_input = st.sidebar.text_input("Senha", type="password", key="password_input_sidebar")
+    username_input = st.sidebar.text_input("Usuário", key="login_username_input") # Chave única para evitar conflito com triagem
+    password_input = st.sidebar.text_input("Senha", type="password", key="login_password_input") # Chave única
     
-    if st.sidebar.button("Entrar"):
+    if st.sidebar.button("Entrar", key="login_button_sidebar"):
         if (username_input == ADMIN_USERNAME_SECRET and
                 password_input == ADMIN_PASSWORD_SECRET):
             st.session_state["logged_in"] = True
-            st.success("Login realizado com sucesso! Você pode acessar 'Visualizar Relatórios'.")
-            st.rerun() # Força rerun para atualizar a interface (exibir a opção de Relatórios)
+            st.success("Login realizado com sucesso! Você pode acessar 'Visualizar Relatórios' agora.")
+            st.rerun() # Força rerun para exibir a opção de Relatórios
         else:
+            st.session_state["logged_in"] = False
             st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
             st.rerun() # Força rerun para mostrar o erro e manter campos de login
     
-    # Se ainda não estiver logado, não adiciona "Visualizar Relatórios" nas opções de navegação
+    # Define a página selecionada para 'Triagem Inicial' se não logado para evitar acesso a 'Visualizar Relatórios'
+    # Esta linha garante que, mesmo que se manipule a URL, a Triagem é a única página pública.
+    st.session_state.current_page = "Triagem Inicial"
 
-else: # Se o usuário ESTIVER logado
-    page_options.append("Visualizar Relatórios") # Adiciona a opção de relatórios APENAS se logado
-    st.sidebar.success("Logado! Bem-vindo(a).")
-    if st.sidebar.button("Sair", key="logout_button"):
+# Se o usuário ESTIVER logado, adiciona 'Visualizar Relatórios' e exibe o botão de Sair
+else: 
+    page_options.append("Visualizar Relatórios") # Adiciona a opção de relatórios quando logado
+    
+    # Mantém a página atual selecionada ou reinicia para triagem se página anterior fosse restrita
+    if 'current_page' not in st.session_state or st.session_state.current_page not in page_options:
+        st.session_state.current_page = "Triagem Inicial" # Garante que ao logar, ou se o estado for inconsistente, comece na Triagem
+
+    selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page))
+    st.session_state.current_page = selected_page
+
+    st.sidebar.success(f"Logado como: {ADMIN_USERNAME_SECRET} ") # Exibe o usuário logado
+    if st.sidebar.button("Sair", key="logout_button"): # Adicionar botão de logout
         st.session_state["logged_in"] = False
         st.session_state.clear() # Limpa o estado da sessão completamente ao deslogar
         st.rerun() # Recarrega o app para mostrar a tela de login novamente
-
-
-# Seleção da página principal, após o login/não-login ter sido tratado
-# Garante que a página selecionada inicial seja sempre 'Triagem Inicial' se não logado
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "Triagem Inicial"
-
-# Se o usuário tentar acessar "Visualizar Relatórios" sem estar logado, força ele pra Triagem
-# Isso previne que ele "pule" a tela de login clicando diretamente na opção de relatórios se por acaso ela estivesse visível por algum bug de estado
-if "Visualizar Relatórios" in page_options: # Só permite selecionar "Visualizar Relatórios" se ela for uma opção disponível (ou seja, se estiver logado)
-    selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page) if st.session_state.current_page in page_options else 0)
-else: # Se não estiver logado, a única opção é Triagem Inicial
-    selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=0)
-    
-st.session_state.current_page = selected_page
 
 
 # --- Renderização das Páginas ---
@@ -422,8 +421,9 @@ st.session_state.current_page = selected_page
 # Página de Triagem Inicial (SEMPRE PÚBLICA E ACESSÍVEL)
 if st.session_state.current_page == "Triagem Inicial":
     # Inicializar o estado da sessão para a Triagem
-    # Note: Use um nome diferente (como triagem_flow_state) para evitar conflito com a navegação principal
-    if 'triagem_flow_state' not in st.session_state:
+    # Nota: Usando 'triagem_flow_state' para o fluxo interno da triagem para evitar conflitos com a navegação principal (current_page)
+    # E limpando todo o session_state relacionado à triagem a cada novo início (para evitar dados de sessões anteriores)
+    if 'triagem_flow_state' not in st.session_state or st.session_state.triagem_flow_state == 'finished': 
         st.session_state.triagem_flow_state = 'consent'
         st.session_state.dados_paciente = {}
         st.session_state.current_question_index = 0
@@ -431,21 +431,23 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.report_filepath = None
         st.session_state.report_content_for_email = None
 
-    # Etapa de Consentimento
+    # Este if/else st.session_state.triagem_flow_state gerencia o fluxo da triagem
     if st.session_state.triagem_flow_state == 'consent':
       st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
       st.markdown(TERMO_CONSENTIMENTO)
       if st.button("Eu concordo e quero iniciar a triagem"):
         st.session_state.triagem_flow_state = 'initial_greeting'
-        st.session_state.chat_history = [] # Limpa histórico para nova triagem
+        # Limpezas adicionais ao iniciar nova triagem
+        st.session_state.chat_history = [] 
+        st.session_state.dados_paciente = {} 
+        st.session_state.current_question_index = 0
         st.rerun()
 
-    # Etapa de Saudação Inicial
     elif st.session_state.triagem_flow_state == 'initial_greeting':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
-      user_input = st.text_input("Paciente:", key="initial_feeling_input")
+      user_input = st.text_input("Paciente:", key="triagem_initial_feeling_input") # Chave de campo única
       if user_input:
         st.session_state.dados_paciente['sentimento_inicial'] = user_input
         st.session_state.chat_history.append({"speaker": "Paciente", "text": user_input})
@@ -457,7 +459,6 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.triagem_flow_state = 'triagem_questions'
         st.rerun()
 
-    # Etapa de Perguntas da Triagem
     elif st.session_state.triagem_flow_state == 'triagem_questions':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
@@ -472,46 +473,47 @@ if st.session_state.current_page == "Triagem Inicial":
         else:
           current_question = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
           
-          st.write(f"**IA**: {current_question}")
+          st.write(f"**IA**: {current_question}") # Pergunta da IA para o paciente
           user_response = st.text_input("Paciente:", key=f"question_input_{st.session_state.current_question_index}")
 
           if user_response:
             st.session_state.chat_history.append({"speaker": "Paciente", "text": user_response})
             
-            st.session_state.dados_paciente[f"Pergunta {st.session_state.current_question_index+1}: {current_question}"] = user_response
+            question_key_str = f"Pergunta {st.session_state.current_question_index+1}: {current_question}"
+            st.session_state.dados_paciente[question_key_str] = user_response
 
             if checar_risco_imediato(user_response):
               st.warning("!!! ATENÇÃO !!! Foi detectada uma fala relacionada a risco de suicídio ou homicídio.")
               st.warning("Lembre-se do item 4 do Termo de Consentimento: 'A quebra de sigilo será feita em caso de falas sobre suicídio e homicídio do escutado.' É crucial que você procure ajuda profissional imediata.")
               st.session_state.dados_paciente["ALERTA_RISCO_IMEDIATO"] = "Sim"
 
+            # --- CHAMADA ATUALIZADA para get_triagem_reflection (com contexto da pergunta!) ---
             if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS) -1:
-              reflection_triagem = get_triagem_reflection(user_response)
+              reflection_triagem = get_triagem_reflection(user_response, current_question)
               st.session_state.chat_history.append({"speaker": "IA", "text": reflection_triagem})
 
             st.session_state.current_question_index += 1
             st.rerun()
-      else:
+      else: # Fallback case, should be handled by the above logic
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
         st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
         st.session_state.triagem_flow_state = 'generate_report'
         st.rerun()
 
-    # Etapa de Geração e Salvamento do Relatório
     elif st.session_state.triagem_flow_state == 'generate_report':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
 
       relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
         
-      # Prepara o corpo do email, garantindo que nunca seja None
+      # Prepara o corpo do email, garantindo que nunca seja None ou vazio
       email_to_send_body = ""
       if relatorio_gerado:
           email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
       else: # Se a IA falhar em gerar o relatório, informa o usuário e prepara um corpo de email padrão
           st.error("Desculpe, não foi possível gerar o relatório completo neste momento (erro da IA).")
-          email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, verifique a aplicação Streamlit."
+          email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, entre em contato com o suporte da REDE ELLe."
           
       st.session_state.report_content_for_email = email_to_send_body
 
@@ -536,7 +538,6 @@ if st.session_state.current_page == "Triagem Inicial":
       st.session_state.triagem_flow_state = 'finished'
       st.rerun()
 
-    # Etapa Final (para que a barra de input não apareça depois de terminar)
     elif st.session_state.triagem_flow_state == 'finished':
       for chat in st.session_state.chat_history:
         st.write(f"**{chat['speaker']}**: {chat['text']}")
@@ -572,15 +573,14 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         min_report_id = reports_list[-1][0] if reports_list else 1
         max_report_id = reports_list[0][0] if reports_list else 1
 
-        # Garante que o slider de ID comece com um valor válido
         if 'report_id_input' not in st.session_state or st.session_state.report_id_input < min_report_id or st.session_state.report_id_input > max_report_id:
-            st.session_state.report_id_input = max_report_id # Default para o mais recente
+            st.session_state.report_id_input = max_report_id
 
         report_to_view_id = st.number_input(
             "Digite o ID do relatório para visualizar os detalhes:", 
             min_value=min_report_id, 
             max_value=max_report_id, 
-            value=st.session_state.report_id_input, # Usa o valor do session_state
+            value=st.session_state.report_id_input,
             format="%d", 
             key="report_id_input"
         )
