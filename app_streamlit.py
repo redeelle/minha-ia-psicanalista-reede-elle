@@ -11,9 +11,9 @@ import altair as alt # Para criar os gráficos
 import smtplib
 from email.message import EmailMessage
 
-# Adicione estas duas linhas aqui para o SQLite e JSON:
-import sqlite3 # Para organizar os dados da triagem
-import json # Para guardar os dados de forma que o computador entenda
+# Para Banco de Dados SQLite
+import sqlite3
+import json
 
 # --- Configuração Inicial ---
 # Carregar as variáveis de ambiente do arquivo .env
@@ -22,43 +22,6 @@ load_dotenv()
 # Inicializar o cliente da OpenAI com sua chave de API
 # A API Key será lida do .env localmente ou dos Streamlit Secrets em produção
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# --- Configuração da Gaveta de Relatórios (Banco de Dados SQLite) ---
-DB_NAME = "redeelle_relatorios.db" # Nome do arquivo do nosso "caderno organizado"
-
-def init_db():
-    conn = sqlite3.connect(DB_NAME) # Conecta ou cria o arquivo do caderno
-    cursor = conn.cursor()
-    # Pede para criar uma "folha" dentro do caderno, se ela não existir
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS reports (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,   -- Número único para cada relatório
-        timestamp TEXT NOT NULL,        -- Quando foi feito o relatório
-        patient_name_for_file TEXT,     -- Nome anônimo do paciente para o arquivo
-        patient_data TEXT NOT NULL,     -- Todas as perguntas e respostas (como guardamos agora)
-        generated_report TEXT NOT NULL,     -- O relatório que a IA gerou
-        risk_alert TEXT,            -- Se teve alerta de risco (suicídio/homicídio)
-        email_sent INTEGER          -- Se o e-mail foi enviado (0 para não, 1 para sim)
-    );
-    """)
-    # NOVO: Cria a tabela para armazenar os feedbacks
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS feedback (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        report_id INTEGER NOT NULL,
-        feedback_text TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
-    );
-    """)
-    conn.commit() # Salva as mudanças na folha
-    conn.close()  # Fecha o caderno
-
-# Chamamos a função para arrumar o caderno assim que o aplicativo começa
-init_db()
-
-# --- Fim da Configuração da Gaveta de Relatórios ---
-
 
 # Obter credenciais de e-mail do ambiente
 SENDER_EMAIL = os.getenv("EMAIL_ADDRESS")
@@ -69,6 +32,39 @@ RECEIVER_EMAIL = SENDER_EMAIL # Enviamos para o mesmo e-mail, pois é para Carla
 ADMIN_USERNAME_SECRET = os.getenv("ADMIN_USERNAME")
 ADMIN_PASSWORD_SECRET = os.getenv("ADMIN_PASSWORD")
 
+
+# --- Configuração da Gaveta de Relatórios (Banco de Dados SQLite) com st.connection ---
+def init_db():
+    # Use st.connection para obter uma conexão persistente com o banco de dados SQLite
+    # O 'url' aqui define o nome do arquivo do DB dentro do ambiente persistente do Streamlit
+    conn = st.connection("redeelle_reports_db", type="sqlite")
+
+    # Criar a tabela 'reports' se ela não existir
+    conn.query("""
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,   -- Número único para cada relatório
+            timestamp TEXT NOT NULL,        -- Quando foi feito o relatório
+            patient_name_for_file TEXT,     -- Nome anônimo do paciente para o arquivo
+            patient_data TEXT NOT NULL,     -- Todas as perguntas e respostas (JSON)
+            generated_report TEXT NOT NULL,     -- O relatório que a IA gerou
+            risk_alert TEXT,            -- Se teve alerta de risco (suicídio/homicídio)
+            email_sent INTEGER          -- Se o e-mail foi enviado (0 para não, 1 para sim)
+        );
+    """, ttl=0) # ttl=0 garante que a query rode sempre, importante para criação de tabela
+
+    # Criar a tabela 'feedback' se ela não existir
+    conn.query("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL,
+            feedback_text TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
+        );
+    """, ttl=0) # ttl=0 garante que a query rode sempre
+
+# Chamamos a função para arrumar o caderno assim que o aplicativo começa
+init_db()
 
 st.set_page_config(page_title="Psicanálise Digital REDE ELLe", layout="centered")
 
@@ -175,6 +171,7 @@ def compile_full_report_text(patient_data, generated_report_content):
     full_report_text += "## Dados Coletados na Triagem:\n"
     for question_key, response_value in patient_data.items():
         if isinstance(question_key, str) and isinstance(response_value, str):
+            # Usar 'question_key' diretamente, pois ela já contém o texto da pergunta
             full_report_text += f"- {question_key}: {response_value}\n"
     full_report_text += "\n---\n\n"
     full_report_text += "## EXAME PSÍQUICO com devolutiva Psicanalítica (Gerado pela IA):\n"
@@ -189,14 +186,12 @@ def compile_full_report_text(patient_data, generated_report_content):
 
 def checar_risco_imediato(texto):
     texto_lower = texto.lower()
-    if "suicídio" in texto_lower or "homicídio" in texto_lower or "matar" in texto_lower:
+    # Adicionando termos mais abrangentes
+    if any(palavra in texto_lower for palavra in ["suicídio", "homicídio", "matar", "me matar", "se matar", "tirar a vida", "atentar contra a vida", "desejo morrer", "não quero viver"]):
         return True
     return False
 
-# get_emotional_reflection não será mais usada para reflexões da triagem.
-# Será uma saudação inicial fixa, ou uma escolha dentre poucas frases fixas.
 def get_initial_greeting_reflection(user_input_text):
-    # Escolhe uma frase de acolhimento inicial fixo/pre-aprovado
     initial_greetings = [
         "Acolho sua saudação. O espaço está aberto para você.",
         "Sua presença é sentida aqui.",
@@ -205,35 +200,25 @@ def get_initial_greeting_reflection(user_input_text):
     ]
     return random.choice(initial_greetings)
 
-
-# --- AGORA A FUNÇÃO get_triagem_reflection SIMPLESMENTE ESCOLHE UMA DAS FRASES PRE-APROVADAS ---
 def get_triagem_reflection(patient_answer, preceding_question, patient_name=None):
-    # A IA não vai mais gerar a frase, ela vai escolher uma da lista pré-aprovada
     return random.choice(DEVOLUTIVAS_NEUTRAS)
 
 def get_final_patient_summary(dados_paciente_temp):
-    # A mensagem final não precisa mais de IA, pode usar a lista FRASES_TRANSICAO_ANALISTA ou uma fixa.
-    # Para manter a variabilidade, escolhemos uma da lista.
-    # base_message = random.choice(FRASES_TRANSICAO_ANALISTA) # Comentei essa linha pois não está sendo usada
-
     try:
-        # Opcional: Ainda usar a IA para contextualizar, mas com prompt super restrito.
-        # Para este caso, vamos simplificar para uma mensagem fixa ou da lista.
-        # Se precisar de um resumo contextualizado, reativar a IA aqui com um prompt muito mais forte.
         patient_name_found = "Paciente"
         q1_data = dados_paciente_temp.get("Pergunta 1: Qual seu nome, idade, whatsapp e cidade?", "")
         if q1_data:
             try:
-                patient_name_found = q1_data.split(',')[0].strip().split(' ')[0]
-                if not patient_name_found or not patient_name_found.isalpha():
-                    patient_name_found = "Paciente"
+                first_name_match = q1_data.split(',')[0].strip().split(' ')[0]
+                if first_name_match and first_name_match.isalpha():
+                    patient_name_found = first_name_match
             except:
                 patient_name_found = "Paciente"
 
         final_message_text = (
             f"Agradeço imensamente, {patient_name_found}, pela sua disponibilidade em compartilhar suas vivências conosco. Sua sessão de escuta inicial foi concluída com sucesso e suas informações serão analisadas com o cuidado e a ética que lhe são devidos.\n\n"
             f"\n\n"
-            f"A Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe) fará contato em breve para os próximos passos da jornada. Esteja atento(a) ao seu e-mail ou WhatsApp." # Pequeno ajuste aqui "Esteja" para "Esteja atento(a) ao seu e-mail ou WhatsApp."
+            f"A Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe) fará contato em breve para os próximos passos da jornada. Esteja atento(a) ao seu e-mail ou WhatsApp."
         )
         return final_message_text
 
@@ -248,12 +233,16 @@ def gerar_relatorio_gpt(dados_paciente_temp):
         if isinstance(pergunta, str) and isinstance(resposta, str):
             historico_triagem += f"- {pergunta}: {resposta}\n"
 
+    # --- PROMPT REVISADO PARA GARANTIR ESTREITEZA E PROFUNDIDADE PSICANALÍTICA ---
     prompt_para_relatorio = f"""
     Você é uma Inteligência Artificial auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe).
-    Sua tarefa é analisar as informações fornecidas por um paciente durante uma triagem inicial e gerar um 'EXAME PSÍQUICO com devolutiva Psicanalítica' conforme a estrutura fornecida.
-    É fundamental que você preencha CADA seção do relatório com base nas respostas do paciente. Faça inferências e observações pertinentes onde for possível e necessário, mas deixe claro se uma informação é uma inferência ou se está ausente.
+    Sua tarefa é analisar as 'Informações do Paciente e Respostas da Triagem' fornecidas e gerar um 'EXAME PSÍQUICO com devolutiva Psicanalítica' conforme a estrutura abaixo.
 
-    Após o Exame Psíquico, inclua uma seção de "Perspectivas Teóricas Preliminares" aplicando brevemente lentes de Freud, Lacan, Winnicott e Ferenczi, onde pertinente, para sugerir possíveis dinâmicas. Contextualize a relevância do pensador à questão levantada, não apenas um resumo da teoria.
+    **Sua análise DEVE ser estritamente baseada SOMENTE nas 'Informações do Paciente e Respostas da Triagem' que lhe são fornecidas, sem trazer informações externas, inventar detalhes históricos do paciente, ou fazer suposições sem base no texto.** Se uma informação não estiver presente, declare que está ausente ou que não foi possível inferir a partir dos dados.
+
+    Ao preencher a 'Hipótese Diagnóstica final', condense as observações de forma sintetizada, aplicando uma lente psicanalítica para sugerir dinâmicas inconscientes e possíveis estruturas psíquicas *inferidas a partir dos dados fornecidos*, sem fazer um diagnóstico formal de doença mental ou categorizar excessivamente. Foque nas nuances e contradições do relato do paciente.
+
+    Após o Exame Psíquico, inclua uma seção de "Perspectivas Teóricas Preliminares" aplicando brevemente lentes de Freud, Lacan, Winnicott e Ferenczi, onde pertinente, para sugerir possíveis dinâmicas. Contextualize a relevância do pensador à questão levantada *pelo paciente na triagem*, não apenas um resumo da teoria. Se uma teoria não se aplica claramente ou exigiria mais dados específicos do paciente, mencione isso.
 
     Finalize com uma seção de "Sugestões de Intervenção e Atendimento" com base nos dados.
 
@@ -266,24 +255,24 @@ def gerar_relatorio_gpt(dados_paciente_temp):
     Hipótese Diagnóstica final:
 
     ## Perspectivas Teóricas Preliminares:
-    (Para cada teoria abaixo, analise as falas do paciente e ofereça uma breve perspectiva psicanalítica, conectando a teoria às experiências relatadas. Seja conciso e perspicaz. Se uma teoria não se aplicar ou exigir mais dados, mencione isso.)
+    (Para cada teoria abaixo, analise as falas do paciente e ofereça uma breve perspectiva psicanalítica, conectando a teoria às experiências relatadas na triagem. Seja conciso e perspicaz. Lembre-se, baseie-se APENAS nos dados fornecidos do paciente. Se uma teoria não se aplicar ou exigir mais dados *do paciente*, mencione isso de forma clara.)
     - **Sigmund Freud:**
     - **Jacques Lacan:**
     - **Donald Winnicott:**
     - **Sándor Ferenczi:**
 
     ## Sugestões de Intervenção e Atendimento:
-    (Com base na triagem e nas perspectivas preliminares, aponte caminhos possíveis para a psicanalista Carla Viviane Guedes Ferreira, considerando focos terapêuticos e possíveis abordagens iniciais de acolhimento e elaboração.)
+    (Com base na triagem e nas perspectivas preliminares *extraídas APENAS dos dados do paciente*, aponte caminhos possíveis para a psicanalista Carla Viviane Guedes Ferreira, considerando focos terapêuticos e possíveis abordagens iniciais de acolhimento e elaboração.)
 
-    Por favor, gere o relatório preenchendo as seções acima com base nas informações fornecidas. Seja conciso, mas completo e analítico.
-    """
+    Por favor, gere o relatório preenchendo as seções acima. Seja conciso, mas completo e analítico, **sempre respeitando as informações do paciente e o objetivo de auxílio à psicanálise**."
+    """ # Fim do prompt revisado
 
     try:
         with st.spinner("A IA está gerando o relatório interno..."):
             resposta_gpt = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "Você é uma IA assistente psicanalítica, auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe). Seu objetivo é gerar relatórios de triagem detalhados e analíticos para uso profissional."},
+                    {"role": "system", "content": "Você é uma IA assistente psicanalítica, auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe). Seu objetivo é gerar relatórios de triagem detalhados e analíticos para uso profissional. Sua análise deve ser estritamente baseada nos dados fornecidos pelo paciente. Não adicione informações externas ou não inferidas diretamente do histórico do paciente."},
                     {"role": "user", "content": prompt_para_relatorio}
                 ],
                 temperature=0.85, # Temperatura ajustada para 0.85 para dar mais simbolismo
@@ -305,7 +294,6 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
     if q1_data:
         name_parts = str(q1_data).split(',')[0].strip()
         if name_parts:
-            # Garante que o nome do arquivo seja limpo e seguro
             patient_name_for_file = "".join(c for c in name_parts if c.isalnum() or c == ' ').strip().replace(" ", "_").replace("__", "_")
             if not patient_name_for_file:
                 patient_name_for_file = "PacienteAnonimo"
@@ -313,34 +301,35 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
     filename_full = f"relatorio_{patient_name_for_file}_{timestamp_for_db}.txt"
 
     reports_dir = "relatorios_triagem"
+    # Este diretório 'relatorios_triagem' é para salvar arquivos localmente, mas não persistirá no Streamlit Cloud.
+    # O importante é que os dados estão indo para o st.connection abaixo, que é persistente.
     if not os.path.exists(reports_dir):
         os.makedirs(reports_dir)
 
     filepath = os.path.join(reports_dir, filename_full)
-
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(compiled_report_text_for_file_and_email)
 
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    patient_data_json = json.dumps(patient_data, ensure_ascii=False)
+    # NOVO: Usando st.connection para inserir dados no DB persistente
+    conn = st.connection("redeelle_reports_db", type="sqlite")
+    patient_data_json = json.dumps(patient_data, ensure_ascii=False) # Converte dicionário para JSON string
 
     risk_alert_status = "Sim" if patient_data.get("ALERTA_RISCO_IMEDIATO") == "Sim" else "Não"
 
-    cursor.execute("""
-    INSERT INTO reports (timestamp, patient_name_for_file, patient_data, generated_report, risk_alert, email_sent)
-    VALUES (?, ?, ?, ?, ?, ?);
-    """, (
+    # Query para inserção de dados
+    conn.query("""
+        INSERT INTO reports (timestamp, patient_name_for_file, patient_data, generated_report, risk_alert, email_sent)
+        VALUES (?, ?, ?, ?, ?, ?);
+    """,
+    (
         timestamp_for_db,
         patient_name_for_file,
         patient_data_json,
         raw_generated_report_content,
         risk_alert_status,
         1 if email_sent_status else 0
-    ))
-    conn.commit()
-    conn.close()
+    ),
+    ttl=0) # ttl=0 garante que a query seja executada imediatamente e não use cache
 
     return filepath, compiled_report_text_for_file_and_email
 
@@ -350,17 +339,16 @@ def send_report_email(subject, body, filepath=None):
         return False
 
     msg = EmailMessage()
-    # GARANTIR: Converte o corpo do e-mail para string, mesmo se for None, para evitar TypeError/KeyError
     body_as_string = str(body) if body is not None else ""
 
-    if not body_as_string.strip(): # Verifica se o corpo é vazio ou só espaços em branco
+    if not body_as_string.strip():
         st.error("O corpo do e-mail está vazio ou inválido. O envio foi abortado.")
         return False
 
     msg['Subject'] = subject
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECEIVER_EMAIL
-    msg.set_content(body_as_string) # Usa a versão segura do corpo do e-mail
+    msg.set_content(body_as_string)
 
     if filepath and os.path.exists(filepath):
         import mimetypes
@@ -389,41 +377,31 @@ def send_report_email(subject, body, filepath=None):
         return False
 
 
-# NOVO: Função para salvar feedback
+# NOVO: Função para salvar feedback (com st.connection)
 def save_feedback_entry(report_id, feedback_text):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    conn = st.connection("redeelle_reports_db", type="sqlite")
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    cursor.execute("INSERT INTO feedback (report_id, feedback_text, timestamp) VALUES (?, ?, ?)",
-                   (report_id, feedback_text, timestamp))
-    conn.commit()
-    conn.close()
+    conn.query("INSERT INTO feedback (report_id, feedback_text, timestamp) VALUES (?, ?, ?)",
+               (report_id, feedback_text, timestamp), ttl=0)
 
-# NOVO: Função para obter feedback de um relatório
+# NOVO: Função para obter feedback de um relatório (com st.connection)
 def get_feedback_for_report(report_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT feedback_text, timestamp FROM feedback WHERE report_id = ? ORDER BY timestamp DESC", (report_id,))
-    feedback_entries = cursor.fetchall()
-    conn.close()
-    return feedback_entries
+    conn = st.connection("redeelle_reports_db", type="sqlite")
+    feedback_entries_df = conn.query("SELECT feedback_text, timestamp FROM feedback WHERE report_id = ? ORDER BY timestamp DESC",
+                                     (report_id,), ttl=0)
+    return feedback_entries_df.fetchall()
 
 def get_reports_from_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, timestamp, patient_name_for_file, risk_alert, email_sent FROM reports ORDER BY timestamp DESC")
-    reports_data = cursor.fetchall()
-    conn.close()
-    return reports_data
+    conn = st.connection("redeelle_reports_db", type="sqlite")
+    reports_data_df = conn.query("SELECT id, timestamp, patient_name_for_file, risk_alert, email_sent FROM reports ORDER BY timestamp DESC", ttl=0)
+    return reports_data_df.fetchall()
 
 def get_single_report_from_db(report_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT patient_data, generated_report FROM reports WHERE id = ?", (report_id,))
-    report_detail = cursor.fetchone()
-    conn.close()
+    conn = st.connection("redeelle_reports_db", type="sqlite")
+    report_detail_df = conn.query("SELECT patient_data, generated_report FROM reports WHERE id = ?", (report_id,), ttl=0)
+    report_detail = report_detail_df.fetchone()
     if report_detail:
-        return json.loads(report_detail[0]), report_detail[1]
+        return json.loads(report_detail[0]), report_detail[1] # patient_data é JSON string, precisa carregar
     return {}, ""
 
 
@@ -432,62 +410,49 @@ st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
 # --- Lógica de Segurança (Login) ---
-# Inicializa o estado de logado se não existir
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
-# --- Configuração e Exibição do Menu Principal ---
 st.sidebar.title("Navegação REDE ELLe")
 
-# Define as opções de página. 'Visualizar Relatórios' só aparece se logado.
 page_options = ["Triagem Inicial"]
 
-# Se o usuário NÃO estiver logado, exibe os campos de login na barra lateral e gerencia a tentativa de login
 if not st.session_state["logged_in"]:
     st.sidebar.subheader("Login para Acesso Restrito")
-    username_input = st.sidebar.text_input("Usuário", key="login_username_input") # Chave única para evitar conflito com triagem
-    password_input = st.sidebar.text_input("Senha", type="password", key="login_password_input") # Chave única
+    username_input = st.sidebar.text_input("Usuário", key="login_username_input")
+    password_input = st.sidebar.text_input("Senha", type="password", key="login_password_input")
 
     if st.sidebar.button("Entrar", key="login_button_sidebar"):
         if (username_input == ADMIN_USERNAME_SECRET and
             password_input == ADMIN_PASSWORD_SECRET):
             st.session_state["logged_in"] = True
             st.success("Login realizado com sucesso! Você pode acessar 'Visualizar Relatórios' agora.")
-            st.rerun() # Força rerun para exibir a opção de Relatórios
+            st.rerun()
         else:
             st.session_state["logged_in"] = False
             st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
-            st.rerun() # Força rerun para mostrar o erro e manter campos de login
+            st.rerun()
 
-    # Define a página selecionada para 'Triagem Inicial' se não logado para evitar acesso a 'Visualizar Relatórios'
-    # Esta linha garante que, mesmo que se manipule a URL, a Triagem é a única página pública.
     st.session_state.current_page = "Triagem Inicial"
 
-# Se o usuário ESTIVER logado, adiciona 'Visualizar Relatórios' e exibe o botão de Sair
 else:
-    page_options.append("Visualizar Relatórios") # Adiciona a opção de relatórios quando logado
+    page_options.append("Visualizar Relatórios")
 
-    # Mantém a página atual selecionada ou reinicia para triagem se página anterior fosse restrita
     if 'current_page' not in st.session_state or st.session_state.current_page not in page_options:
-        st.session_state.current_page = "Triagem Inicial" # Garante que ao logar, ou se o estado for inconsistente, comece na Triagem
+        st.session_state.current_page = "Triagem Inicial"
 
     selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page))
     st.session_state.current_page = selected_page
 
-    st.sidebar.success(f"Logado como: {ADMIN_USERNAME_SECRET}") # Exibe o usuário logado
-    if st.sidebar.button("Sair", key="logout_button"): # Adicionar botão de logout
+    st.sidebar.success(f"Logado como: {ADMIN_USERNAME_SECRET}")
+    if st.sidebar.button("Sair", key="logout_button"):
         st.session_state["logged_in"] = False
-        st.session_state.clear() # Limpa o estado da sessão completamente ao deslogar
-        st.rerun() # Recarrega o app para mostrar a tela de login novamente
+        st.session_state.clear()
+        st.rerun()
 
 
 # --- Renderização das Páginas ---
-
-# Página de Triagem Inicial (SEMPRE PÚBLICA E ACESSÍVEL)
 if st.session_state.current_page == "Triagem Inicial":
-    # Inicializar o estado da sessão para a Triagem
-    # Nota: Usando 'triagem_flow_state' para o fluxo interno da triagem para evitar conflitos com a navegação principal (current_page)
-    # E limpando todo o session_state relacionado à triagem a cada novo início (para evitar dados de sessões anteriores)
     if 'triagem_flow_state' not in st.session_state or st.session_state.triagem_flow_state == 'finished':
         st.session_state.triagem_flow_state = 'consent'
         st.session_state.dados_paciente = {}
@@ -495,94 +460,74 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.chat_history = []
         st.session_state.report_filepath = None
         st.session_state.report_content_for_email = None
-        st.session_state.patient_first_name = None # Variável para guardar o nome do paciente
+        st.session_state.patient_first_name = None
 
-    # Este if/else st.session_state.triagem_flow_state gerencia o fluxo da triagem
     if st.session_state.triagem_flow_state == 'consent':
         st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
         st.markdown(TERMO_CONSENTIMENTO)
         if st.button("Eu concordo e quero iniciar a triagem"):
-            st.session_state.triagem_flow_state = 'triagem_questions' # Direto para perguntas
+            st.session_state.triagem_flow_state = 'triagem_questions'
             st.session_state.dados_paciente = {}
-            st.session_state.current_question_index = 0 # Define a primeira pergunta como o índice 0
-            st.session_state.chat_history = [] # Zera o histórico
-            st.session_state.patient_first_name = None # Reinicia o nome
+            st.session_state.current_question_index = 0
+            st.session_state.chat_history = []
+            st.session_state.patient_first_name = None
 
-            # Adicionar a saudação inicial e a primeira pergunta IMEDIATAMENTE após o consentimento
             initial_ia_message = """Oi, boa noite. Eu sou uma IA de triagem da Rede ELLe, como você deve ter lido no termo de consentimento. Estou aqui para receber algumas informações suas e, logo após, farei um resumo para a Psicanalista Carla Viviane Guedes Ferreira, que entende melhor de casos como o que você me trará, certo?
 
 Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade? (Por favor responda o mais completo para um retorno positivo).
-""" # UNIFICADA a explicação e a primeira pergunta
+"""
             st.session_state.chat_history.append({"speaker": "IA", "text": initial_ia_message})
-            # NÃO adicione TRIAGEM_PERGUNTAS[0] aqui. Ela será adicionada na própria `triagem_questions` na próxima renderização.
-
             st.rerun()
 
     elif st.session_state.triagem_flow_state == 'triagem_questions':
-        # Exibe todo o histórico de chat até o momento
         for chat in st.session_state.chat_history:
             st.write(f"**{chat['speaker']}**: {chat['text']}")
 
-        # Garante que um campo de input só apareça se houver uma pergunta 'ativa'
         if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS):
-            # A pergunta cuja resposta estamos esperando é TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
             user_response = st.text_input("Paciente:", key=f"question_input_{st.session_state.current_question_index}")
 
-            if user_response: # Se o paciente enviar uma resposta
+            if user_response:
                 st.session_state.chat_history.append({"speaker": "Paciente", "text": user_response})
 
-                # Obtém o texto da pergunta que o paciente acabou de responder
-                # question_just_answered_text = TRIAGEM_PERGUNTAS[st.session_state.current_question_index] # Esta variável não é usada diretamente aqui
-                question_key_str = f"Pergunta {st.session_state.current_question_index+1}: {TRIAGEM_PERGUNTAS[st.session_state.current_question_index]}" # Captura a pergunta para o dicionário de dados
+                question_key_str = f"Pergunta {st.session_state.current_question_index+1}: {TRIAGEM_PERGUNTAS[st.session_state.current_question_index]}"
                 st.session_state.dados_paciente[question_key_str] = user_response
 
-                # NOVO: Tentativa de extrair o nome da primeira pergunta APENAS NA PRIMEIRA RESPOSTA
                 if st.session_state.current_question_index == 0:
                     try:
-                        # Tenta pegar a primeira palavra antes da primeira vírgula como nome
                         first_name_match = user_response.split(',')[0].strip().split(' ')[0]
-                        if first_name_match and first_name_match.isalpha(): # Verifica se é algo que parece um nome
+                        if first_name_match and first_name_match.isalpha():
                             st.session_state.patient_first_name = first_name_match
                     except:
-                        st.session_state.patient_first_name = None # Se der erro, não define o nome
+                        st.session_state.patient_first_name = None
 
                 if checar_risco_imediato(user_response):
                     st.warning("!!! ATENÇÃO !!! Foi detectada uma fala relacionada a risco de suicídio ou homicídio.")
                     st.warning("Lembre-se do item 4 do Termo de Consentimento: 'A quebra de sigilo será feita em caso de falas sobre suicídio e homicídio do escutado.' É crucial que você procure ajuda profissional imediata.")
                     st.session_state.dados_paciente["ALERTA_RISCO_IMEDIATO"] = "Sim"
 
-                # --- Lógica de reflexão da IA após a resposta do paciente (AGORA USANDO O NOME) ---
-                reflection_text_ia = "" # Começa a reflexão vazia
-
-                # Reflexão especial para a pergunta do nome (Índice 0)
+                reflection_text_ia = ""
                 if st.session_state.current_question_index == 0:
                     nome_paciente = st.session_state.patient_first_name if st.session_state.patient_first_name else "você"
                     reflection_text_ia = f"{nome_paciente.capitalize()}, agradeço pela resposta. Os dados são registrados."
-                # Para as outras perguntas, usamos a lista de frases neutras.
-                # Se houver uma próxima pergunta pra ser feita.
                 elif (st.session_state.current_question_index + 1) < len(TRIAGEM_PERGUNTAS):
-                    reflection_text_ia = get_triagem_reflection(user_response, question_key_str, st.session_state.patient_first_name) # Passei question_key_str
+                    reflection_text_ia = get_triagem_reflection(user_response, question_key_str, st.session_state.patient_first_name)
 
-                if reflection_text_ia: # Adiciona reflexão ao histórico se não estiver vazia
+                if reflection_text_ia:
                     st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text_ia})
 
-                st.session_state.current_question_index += 1 # Vai para a PRÓXIMA pergunta
+                st.session_state.current_question_index += 1
 
-                # Se houver uma próxima pergunta, adicione-a ao histórico de chat para a próxima renderização
                 if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS):
                     next_question_from_list = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
-
-                    # NOVO: Inserir a frase "Certo [Nome do Paciente]..." ou "Certo..." antes da próxima pergunta
                     if st.session_state.patient_first_name:
                         st.session_state.chat_history.append({"speaker": "IA", "text": f"Certo {st.session_state.patient_first_name.capitalize()}..."})
                     else:
                         st.session_state.chat_history.append({"speaker": "IA", "text": "Certo..."})
-
                     st.session_state.chat_history.append({"speaker": "IA", "text": next_question_from_list})
 
-                st.rerun() # Reroduzir aplicativo para exibir histórico atualizado e próxima pergunta/campo de input
+                st.rerun()
 
-        else: # Todas as perguntas foram feitas, transição para geração de relatório
+        else:
             st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
             st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
             st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
@@ -595,11 +540,10 @@ Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade
 
         relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
 
-        # Prepara o corpo do email, garantindo que nunca seja None ou vazio
         email_to_send_body = ""
         if relatorio_gerado:
             email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
-        else: # Se a IA falhar em gerar o relatório, informa o usuário e prepara um corpo de email padrão
+        else:
             st.error("Desculpe, não foi possível gerar o relatório completo neste momento (erro da IA).")
             email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, entre em contato com o suporte da REDE ELLe."
 
@@ -612,13 +556,12 @@ Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade
         else:
             st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
 
-        # Salva o relatório nos arquivos e no DB
         st.session_state.report_filepath, _ = \
             save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body)
 
         with st.spinner("A IA está elaborando a mensagem final para você..."):
             patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
-        st.write(f"\n**IA**: {patient_summary_final}") # Adicionado o print da mensagem final da IA
+        st.write(f"\n**IA**: {patient_summary_final}")
 
         st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
         st.session_state.triagem_flow_state = 'finished'
@@ -630,20 +573,21 @@ Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade
         st.markdown("--- **Sessão Concluída** ---")
         st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5) ou selecione 'Triagem Inicial' no menu.")
 
-# --- Página de Visualizar Relatórios (Acesso Protegido, SÓ ACESSÍVEL SE LOGADO) ---
+# --- Página de Visualizar Relatórios (Acesso Protegido) ---
 elif st.session_state.current_page == "Visualizar Relatórios":
     st.header("Relatórios de Triagem da REDE ELLe (Acesso Restrito)")
     st.write("Aqui você pode visualizar e gerenciar todos os relatórios de triagem salvos.")
 
     reports_list = get_reports_from_db()
 
-    # CORREÇÃO CRUCIAL AQUI: Inicializar min_report_id e max_report_id FORA do bloco if reports_list
-    min_report_id = 1 # Valor padrão se não houver relatórios
-    max_report_id = 1 # Valor padrão se não houver relatórios
+    # CORREÇÃO: Inicialização padrão de min_report_id e max_report_id
+    min_report_id = 1
+    max_report_id = 1
 
     if reports_list:
         display_data = []
-        for report_id, timestamp, patient_name, risk_alert, email_sent in reports_list:
+        for report_item in reports_list: # reports_list agora retorna tuplas diretamente
+            report_id, timestamp, patient_name, risk_alert, email_sent = report_item
             display_data.append({
                 "ID": report_id,
                 "Data/Hora": datetime.datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%d/%m/%Y %H:%M:%S"),
@@ -655,9 +599,10 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         df = pd.DataFrame(display_data)
 
         # Atualiza min_report_id e max_report_id com base nos dados reais, se existirem
-        all_report_ids = [report[0] for report in reports_list]
-        min_report_id = min(all_report_ids)
-        max_report_id = max(all_report_ids)
+        all_report_ids = df['ID'].tolist()
+        if all_report_ids: # Confere se a lista de IDs não está vazia antes de pegar min/max
+            min_report_id = min(all_report_ids)
+            max_report_id = max(all_report_ids)
 
         st.subheader("Ferramentas de Busca e Filtro")
         col_search, col_risk, col_start_date, col_end_date = st.columns([2, 1, 1, 1])
@@ -667,19 +612,15 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         with col_risk:
             risk_filter = st.selectbox("Filtrar por Alerta de Risco:", ["Todos", "Sim", "Não"], key="filter_risk")
         with col_start_date:
-            # Padrão: últimos 30 dias (se houver dados) ou data atual
             default_start_date = datetime.date.today() - datetime.timedelta(days=30)
-            # Se houver dados no DB, tente usar a data do relatório mais antigo como limite inferior
             if not df.empty:
                 min_db_date = pd.to_datetime(df['Data/Hora'], format="%d/%m/%Y %H:%M:%S").min().date()
                 if min_db_date < default_start_date:
                     default_start_date = min_db_date
-
             start_date = st.date_input("Data de Início:", default_start_date, key="start_date_filter")
         with col_end_date:
             end_date = st.date_input("Data de Fim:", datetime.date.today(), key="end_date_filter")
 
-        # Aplicar filtros
         filtered_df = df.copy()
 
         if search_query:
@@ -687,18 +628,14 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         if risk_filter != "Todos":
             filtered_df = filtered_df[filtered_df["Alerta de Risco"] == risk_filter]
 
-        # Convertendo a coluna 'Data/Hora' para datetime para poder filtrar por data
         filtered_df['Data/Hora_dt'] = pd.to_datetime(filtered_df['Data/Hora'], format="%d/%m/%Y %H:%M:%S")
-        # Assegura que a comparação de datas seja feita apenas com a parte da data
         filtered_df = filtered_df[(filtered_df['Data/Hora_dt'].dt.date >= start_date) & (filtered_df['Data/Hora_dt'].dt.date <= end_date)]
 
-        # Remover a coluna auxiliar de data antes de exibir ao usuário
         filtered_df = filtered_df.drop(columns=['Data/Hora_dt'])
 
         st.subheader("Relatórios Filtrados")
         st.dataframe(filtered_df, use_container_width=True, hide_index=False)
 
-        # Botão de Exportar CSV
         csv_export = filtered_df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Exportar Relatórios para CSV",
@@ -711,7 +648,6 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         st.subheader("Visualizações Gráficas")
 
         if not filtered_df.empty:
-            # Gráfico: número de relatórios por dia
             daily_counts = filtered_df['Data/Hora'].str.split(' ').str[0].value_counts().reset_index()
             daily_counts.columns = ['Data', 'Quantidade']
             daily_counts['Data'] = pd.to_datetime(daily_counts['Data'], format="%d/%m/%Y")
@@ -726,7 +662,6 @@ elif st.session_state.current_page == "Visualizar Relatórios":
             ).interactive()
             st.altair_chart(chart_daily, use_container_width=True)
 
-            # Gráfico: distribuição de alertas de risco
             risk_counts = filtered_df['Alerta de Risco'].value_counts().reset_index()
             risk_counts.columns = ['Alerta', 'Quantidade']
 
@@ -745,17 +680,14 @@ elif st.session_state.current_page == "Visualizar Relatórios":
 
         st.subheader("Visualizar Detalhes do Relatório Individual")
 
-        # Garantir que os valores min_report_id e max_report_id sejam válidos
-        # all_report_ids já está definido acima, antes do if reports_list.
-        # min_report_id e max_report_id já foram inicializados e atualizados se reports_list não for vazia.
-
         if 'report_id_input' not in st.session_state:
-            st.session_state.report_id_input = max_report_id # Usa o ID máximo (ou 1 se vazio) no início
+            st.session_state.report_id_input = max_report_id
 
         report_to_view_id = st.number_input(
             "Digite o ID do relatório para visualizar os detalhes:",
             min_value=min_report_id,
             max_value=max_report_id,
+            value=st.session_state.report_id_input, # Garante que o valor inicial seja o do estado
             format="%d",
             key="report_id_input"
         )
@@ -774,14 +706,14 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                     st.session_state.report_id_input = report_to_view_id
                     st.rerun()
 
-        if st.button("Ver Detalhes do Relatório", key="view_report_button_final"): # ID único para o botão
+        if st.button("Ver Detalhes do Relatório", key="view_report_button_final"):
             if report_to_view_id:
                 patient_data_full, generated_report_full = get_single_report_from_db(report_to_view_id)
                 if patient_data_full:
                     st.markdown(f"**Detalhes do Relatório ID: {report_to_view_id}**")
                     st.markdown("**Dados do Paciente (Triagem Completa):**")
                     for q, r in patient_data_full.items():
-                        st.write(f"- **{q}**: {r}") # Corrigido para imprimir P e R
+                        st.write(f"- **{q}**: {r}")
                     st.markdown("**Relatório de Exame Psíquico (IA):**")
                     st.markdown(generated_report_full)
                 else:
@@ -789,27 +721,21 @@ elif st.session_state.current_page == "Visualizar Relatórios":
             else:
                 st.warning("Por favor, insira um ID de relatório para visualizar.")
 
-    else: # Este bloco é executado se reports_list estiver vazio (nenhum relatório no DB)
+    else:
         st.info("Nenhum relatório de triagem encontrado até o momento.")
-        # Se não há relatórios, não faz sentido exibir os inputs de ID ou feedback, pois não há IDs para selecionar
-        # Podemos adicionar um placeholder ou simplesmente não mostrar.
-        # Para evitar o erro de NameError (já corrigido pela inicialização), o number_input pega 1 como default para min/max
-        # Mas para o feedback, ele pode ser inibido se não houver relatórios.
 
-    # --- NOVO: SEÇÃO DE FEEDBACK INTERNO ---
+    # --- SEÇÃO DE FEEDBACK INTERNO ---
     # Só exibe a seção de feedback se estiver logado E se houver algum relatório no DB
-    if st.session_state.get("logged_in", False) and reports_list:
-        st.markdown("---") # Linha divisória
+    if st.session_state.get("logged_in", False) and reports_list: # reports_list já contem os dados atualizados
+        st.markdown("---")
         st.subheader("Fornecer Feedback para um Relatório")
 
-        # Function to clear the text area content in session state
         def clear_feedback_text_area():
             if "feedback_text_area_input" in st.session_state:
                 st.session_state.feedback_text_area_input = ""
 
-        # Ensure feedback_report_id_form_input has a default before it's used by Streamlit
         if 'feedback_report_id_form_input' not in st.session_state:
-            st.session_state.feedback_report_id_form_input = max_report_id # Inicializa com o último ID (ou 1 se vazio)
+            st.session_state.feedback_report_id_form_input = max_report_id
 
         feedback_report_id = st.number_input(
             "ID do Relatório para Feedback:",
@@ -825,7 +751,6 @@ elif st.session_state.current_page == "Visualizar Relatórios":
             key="feedback_text_area_input"
         )
 
-        # Callback function to be executed when "Salvar Feedback" is clicked
         def submit_feedback_and_clear():
             current_feedback_report_id = st.session_state.get('feedback_report_id_form_input')
             current_feedback_text = st.session_state.get('feedback_text_area_input')
@@ -837,7 +762,6 @@ elif st.session_state.current_page == "Visualizar Relatórios":
             else:
                 st.warning("Por favor, digite um ID de relatório e seu feedback antes de salvar.")
 
-        # The button that triggers the callback
         st.button("Salvar Feedback", on_click=submit_feedback_and_clear, key="save_feedback_button")
 
         st.subheader(f"Feedbacks Registrados para o Relatório ID {feedback_report_id}")
@@ -849,4 +773,4 @@ elif st.session_state.current_page == "Visualizar Relatórios":
         else:
             st.info("Nenhum feedback registrado para este relatório.")
     elif st.session_state.get("logged_in", False) and not reports_list:
-        st.info("Faça uma triagem inicial para que os relatórios e a funcionalidade de feedback sejam populares.")
+        st.info("Faça uma triagem inicial para que os relatórios e a funcionalidade de feedback sejam populados.")
