@@ -37,7 +37,8 @@ ADMIN_PASSWORD_SECRET = os.getenv("ADMIN_PASSWORD")
 def init_db():
     # Use st.connection para obter uma conexão persistente com o banco de dados SQLite
     # O 'url' aqui define o nome do arquivo do DB dentro do ambiente persistente do Streamlit
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
 
     # Criar a tabela 'reports' se ela não existir
     conn.query("""
@@ -311,7 +312,8 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
         f.write(compiled_report_text_for_file_and_email)
 
     # NOVO: Usando st.connection para inserir dados no DB persistente
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
     patient_data_json = json.dumps(patient_data, ensure_ascii=False) # Converte dicionário para JSON string
 
     risk_alert_status = "Sim" if patient_data.get("ALERTA_RISCO_IMEDIATO") == "Sim" else "Não"
@@ -379,25 +381,29 @@ def send_report_email(subject, body, filepath=None):
 
 # NOVO: Função para salvar feedback (com st.connection)
 def save_feedback_entry(report_id, feedback_text):
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     conn.query("INSERT INTO feedback (report_id, feedback_text, timestamp) VALUES (?, ?, ?)",
                (report_id, feedback_text, timestamp), ttl=0)
 
 # NOVO: Função para obter feedback de um relatório (com st.connection)
 def get_feedback_for_report(report_id):
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
     feedback_entries_df = conn.query("SELECT feedback_text, timestamp FROM feedback WHERE report_id = ? ORDER BY timestamp DESC",
                                      (report_id,), ttl=0)
     return feedback_entries_df.fetchall()
 
 def get_reports_from_db():
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
     reports_data_df = conn.query("SELECT id, timestamp, patient_name_for_file, risk_alert, email_sent FROM reports ORDER BY timestamp DESC", ttl=0)
     return reports_data_df.fetchall()
 
 def get_single_report_from_db(report_id):
-    conn = st.connection("redeelle_reports_db", type="sqlite")
+    # CORREÇÃO AQUI: type="sql" no lugar de type="sqlite"
+    conn = st.connection("redeelle_reports_db", type="sql") 
     report_detail_df = conn.query("SELECT patient_data, generated_report FROM reports WHERE id = ?", (report_id,), ttl=0)
     report_detail = report_detail_df.fetchone()
     if report_detail:
@@ -581,12 +587,14 @@ elif st.session_state.current_page == "Visualizar Relatórios":
     reports_list = get_reports_from_db()
 
     # CORREÇÃO: Inicialização padrão de min_report_id e max_report_id
+    # Estes valores só serão usados se reports_list estiver vazia.
+    # Se reports_list tiver dados, eles serão sobrescritos abaixo.
     min_report_id = 1
     max_report_id = 1
 
     if reports_list:
         display_data = []
-        for report_item in reports_list: # reports_list agora retorna tuplas diretamente
+        for report_item in reports_list:
             report_id, timestamp, patient_name, risk_alert, email_sent = report_item
             display_data.append({
                 "ID": report_id,
@@ -598,7 +606,7 @@ elif st.session_state.current_page == "Visualizar Relatórios":
 
         df = pd.DataFrame(display_data)
 
-        # Atualiza min_report_id e max_report_id com base nos dados reais, se existirem
+        # Atualiza min_report_id e max_report_id com base nos dados reais
         all_report_ids = df['ID'].tolist()
         if all_report_ids: # Confere se a lista de IDs não está vazia antes de pegar min/max
             min_report_id = min(all_report_ids)
@@ -726,7 +734,7 @@ elif st.session_state.current_page == "Visualizar Relatórios":
 
     # --- SEÇÃO DE FEEDBACK INTERNO ---
     # Só exibe a seção de feedback se estiver logado E se houver algum relatório no DB
-    if st.session_state.get("logged_in", False) and reports_list: # reports_list já contem os dados atualizados
+    if st.session_state.get("logged_in", False) and reports_list: # reports_list agora contem os dados atualizados
         st.markdown("---")
         st.subheader("Fornecer Feedback para um Relatório")
 
@@ -739,7 +747,9 @@ elif st.session_state.current_page == "Visualizar Relatórios":
 
         feedback_report_id = st.number_input(
             "ID do Relatório para Feedback:",
-            min_value=min_report_id,
+            # A correção do NameError aqui já foi feita pela inicialização padrão acima (min_report_id, max_report_id)
+            # e pela atualização desses valores quando reports_list não é vazia.
+            min_value=min_report_id, 
             max_value=max_report_id,
             value=st.session_state.feedback_report_id_form_input,
             format="%d",
@@ -772,5 +782,5 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                 st.write(f"- **{formatted_timestamp}**: {fb_text}")
         else:
             st.info("Nenhum feedback registrado para este relatório.")
-    elif st.session_state.get("logged_in", False) and not reports_list:
-        st.info("Faça uma triagem inicial para que os relatórios e a funcionalidade de feedback sejam populados.")
+    elif st.session_state.get("logged_in", False) and not reports_list: # Este é o caso quando está logado mas não há relatórios
+        st.info("Faça uma triagem inicial para que os relatórios e a funcionalidade de feedback sejam populares.")
