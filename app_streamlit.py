@@ -1,55 +1,50 @@
-# VERSÃO FINAL E COMPLETA - app_streamlit.py - Com Memória Permanente
+# VERSÃO 3.0 - COMPLETA E DEFINITIVA - IA INTUITIVA COM MEMÓRIA PERMANENTE
 import os
 import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
-import datetime # Para gerar carimbo de data/hora nos nomes dos arquivos
-import random # Para escolher frases aleatoriamente
-import pandas as pd # Para trabalhar com a tabela de dados no dashboard
-import altair as alt # Para criar os gráficos
+import datetime
+import random
+import pandas as pd
+import altair as alt
 import smtplib
 from email.message import EmailMessage
-import sqlite3 # Para organizar os dados da triagem
-import json # Para guardar os dados de forma que o computador entenda
-from google.cloud import storage # ADICIONADO: Para conversar com o "cofre"
+import sqlite3
+import json
+from google.cloud import storage
 
-# --- INÍCIO DA LÓGICA DE PERSISTÊNCIA COM GOOGLE CLOUD STORAGE ---
-BUCKET_NAME = "relatorios-triagem-rede-elle" # O nome do bucket que criamos
-DATABASE_FILE = "redeelle_relatorios.db"     # O nome que o arquivo do banco de dados terá no cofre
+# --- LÓGICA DE PERSISTÊNCIA COM GOOGLE CLOUD STORAGE ---
+BUCKET_NAME = "relatorios-triagem-rede-elle"
+DATABASE_FILE = "redeelle_relatorios.db"
 
 def download_database():
-    """Baixa o banco de dados do Google Cloud Storage, se existir."""
     try:
         storage_client = storage.Client()
         bucket = storage_client.bucket(BUCKET_NAME)
         blob = bucket.blob(DATABASE_FILE)
         if blob.exists():
             blob.download_to_filename(DATABASE_FILE)
-            print(f"Banco de dados '{DATABASE_FILE}' baixado com sucesso do bucket '{BUCKET_NAME}'.")
+            print(f"Banco de dados '{DATABASE_FILE}' baixado com sucesso.")
         else:
-            print(f"Nenhum banco de dados encontrado em '{BUCKET_NAME}'. Um novo será criado na primeira execução.")
+            print(f"Nenhum banco de dados encontrado. Um novo será criado.")
     except Exception as e:
-        st.warning(f"Não foi possível baixar o banco de dados do Google Cloud Storage: {e}")
+        st.warning(f"Não foi possível baixar o banco de dados: {e}")
         print(f"ERRO ao baixar o banco de dados: {e}")
 
 def upload_database():
-    """Envia o banco de dados para o Google Cloud Storage."""
     try:
         storage_client = storage.Client()
         bucket = storage_client.bucket(BUCKET_NAME)
         blob = bucket.blob(DATABASE_FILE)
         blob.upload_from_filename(DATABASE_FILE)
-        print(f"Banco de dados '{DATABASE_FILE}' salvo com sucesso no bucket '{BUCKET_NAME}'.")
+        print(f"Banco de dados '{DATABASE_FILE}' salvo com sucesso na nuvem.")
     except Exception as e:
         st.error(f"FALHA CRÍTICA: Não foi possível salvar os relatórios permanentemente: {e}")
         print(f"ERRO ao salvar o banco de dados: {e}")
-# --- FIM DA LÓGICA DE PERSISTÊNCIA ---
 
 # --- Configuração Inicial ---
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# --- Configuração da Gaveta de Relatórios (Banco de Dados SQLite) ---
 DB_NAME = "redeelle_relatorios.db"
 
 def init_db():
@@ -70,11 +65,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# MODIFICAÇÃO IMPORTANTE: Primeiro baixa o DB da nuvem, depois garante que as tabelas existem.
 download_database()
 init_db()
 
-# Obter credenciais
 SENDER_EMAIL = os.getenv("EMAIL_ADDRESS")
 SENDER_PASSWORD = os.getenv("EMAIL_PASSWORD")
 RECEIVER_EMAIL = SENDER_EMAIL
@@ -117,7 +110,7 @@ TRIAGEM_PERGUNTAS = [
     "Você tem filhos? Como é sua relação com eles?",
     "Como foi sua rotina antes dos sintomas, como é hoje e como deseja que ela fique?",
     "Você possui algum vício?",
-    "Você se sente mais horas conectada à internet ou isolada das pessoas?", # CORREÇÃO AQUI!
+    "Você se sente mais horas conectada à internet ou isolada das pessoas?",
     "Qual seu hobby ou lazer?",
     "Você trabalha com o que ou com o que já trabalhou?",
 ]
@@ -139,24 +132,56 @@ Humor do paciente: normal? exaltado? baixa-de-humor? Quebra súbita de tonalidad
 Consciência do estado mental?
 """
 
-DEVOLUTIVAS_NEUTRAS = [
-    "Obrigado por confiar em dizer isso aqui.", "Essa forma de colocar já diz muito.", "Algo importante começou a emergir com sua fala.",
-    "Fico aqui com você nesse pedaço difícil.", "Às vezes, apenas nomear o que sentimos já é parte do caminho.", "Vamos seguir juntos. Cada palavra tem valor aqui.",
-    "Você não precisa explicar tudo agora.", "Tudo que você disser aqui será sustentado com respeito.", "Eu estou te escutando.",
-    "Seguimos no tempo que for possível pra você.", "Sua fala se faz presente.", "As palavras ressoam.", "O que é trazido é escutado.",
-    "Recebo sua partilha.", "A escuta se mantém atenta.", "Sua partilha é acolhida.", "Há algo dito.", "Ecoo o que foi expresso.",
-    "A escuta se detém no que foi apresentado.", "Registro o que me foi dito.", "Acolho o que você me trouxe.", "Suas palavras encontram espaço aqui.",
-    "Sua narrativa segue aqui.", "A escuta acompanha o relato.", "O que foi dito é recebido.", "O processo continua.", "Assim seguimos.",
-    "Aguardando sua próxima fala.", "Estou aqui.",
-]
-
-FRASES_TRANSICAO_ANALISTA = [
-    "O que você trouxe aqui já mostra a força de um processo simbólico em andamento.", "Se desejar, posso te colocar em contato com uma analista humana da REDE ELLe.",
-    "Esse lugar onde você chegou pode ser continuado com quem vai te escutar profundamente.", "Você pode seguir a partir daqui com quem vai sustentar contigo essa travessia."
-]
-
 # --- Funções Auxiliares ---
+def get_intuitive_reflection(user_input, question_text):
+    user_input_lower = user_input.lower()
+    
+    # Lógica aprimorada para lidar com confusão
+    if any(phrase in user_input_lower for phrase in ["não entendi", "como assim", "não sei o que responder", "explique melhor"]):
+        try:
+            prompt = f"""
+            O paciente não entendeu a pergunta. Sua tarefa é reformular a pergunta de forma mais simples e acolhedora, sem perder o objetivo clínico.
+            NUNCA dê a sua opinião ou exemplos pessoais. Apenas facilite a compreensão.
+            Pergunta Original: "{question_text}"
+            Reformule a pergunta de maneira mais aberta:
+            """
+            response = client.chat.completions.create(
+                model="gpt-4o", messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=60
+            )
+            return response.choices[0].message.content.strip()
+        except Exception:
+            return f"Sem problemas. A pergunta é: '{question_text}'. Por favor, sinta-se à vontade para responder como for mais confortável."
+
+    # Lógica para respostas curtas
+    if len(user_input.split()) <= 3:
+        return "Entendido. Pode continuar."
+
+    # Se não for um dos casos acima, usa a IA para uma reflexão mais humana e contextual
+    try:
+        prompt = f"""
+        Você é uma IA de escuta psicanalítica, atuando como auxiliar da Psicanalista Carla Ferreira. Sua função é gerar uma frase curta (máximo 15 palavras), acolhedora e puramente reflexiva, que demonstre escuta ativa sobre a fala do paciente.
+        REGRAS ABSOLUTAS:
+        1. NUNCA faça perguntas.
+        2. NUNCA dê conselhos ou sugestões.
+        3. NUNCA interprete ou analise o conteúdo.
+        4. NUNCA use as palavras "eu", "sinto", "entendo".
+        5. Foque em validar o ato da fala.
+        Exemplos de tom e estilo: "Suas palavras encontram espaço aqui.", "Isso que você trouxe é significativo.", "A escuta se detém neste ponto.", "Uma memória importante se apresenta.", "O relato ganha forma através da sua fala."
+
+        A fala do paciente foi: "{user_input}"
+        
+        Gere uma única frase de acolhimento reflexivo:
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": prompt}], temperature=0.8, max_tokens=50
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Erro na reflexão da IA, usando frase padrão: {e}")
+        return "Sua fala é recebida e acolhida."
+
 def compile_full_report_text(patient_data, generated_report_content):
+    # (Esta função permanece exatamente a mesma)
     timestamp_for_report = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     full_report_text = f"--- RELATÓRIO DE TRIAGEM REDE ELLe - {timestamp_for_report} ---\n\n"
     full_report_text += "## Dados Coletados na Triagem:\n"
@@ -174,24 +199,14 @@ def compile_full_report_text(patient_data, generated_report_content):
     return full_report_text
 
 def checar_risco_imediato(texto):
+    # (Esta função permanece exatamente a mesma)
     texto_lower = texto.lower()
     if "suicídio" in texto_lower or "homicídio" in texto_lower or "matar" in texto_lower:
         return True
     return False
 
-def get_initial_greeting_reflection(user_input_text):
-    initial_greetings = [
-        "Acolho sua saudação. O espaço está aberto para você.",
-        "Sua presença é sentida aqui.",
-        "O espaço de escuta está disponível.",
-        "Sua fala é recebida aqui."
-    ]
-    return random.choice(initial_greetings)
-
-def get_triagem_reflection(patient_answer, preceding_question, patient_name=None):
-    return random.choice(DEVOLUTIVAS_NEUTRAS)
-
 def get_final_patient_summary(dados_paciente_temp):
+    # (Esta função permanece exatamente a mesma)
     try:
         patient_name_found = "Paciente"
         q1_data = dados_paciente_temp.get("Pergunta 1: Qual seu nome, idade, whatsapp e cidade?", "")
@@ -205,16 +220,15 @@ def get_final_patient_summary(dados_paciente_temp):
                 
         final_message_text = (
             f"Agradeço imensamente, {patient_name_found}, pela sua disponibilidade em compartilhar suas vivências conosco. Sua sessão de escuta inicial foi concluída com sucesso e suas informações serão analisadas com o cuidado e a ética que lhe são devidos.\n\n"
-            f"\n\n"
             f"A Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe) fará contato em breve para os próximos passos da jornada. Esteja atento(a) ao seu e-mail ou WhatsApp."
         )
         return final_message_text
-
     except Exception as e:
         st.warning(f"Não foi possível gerar o resumo final para o paciente: {e}")
         return ("Agradeço imensamente pela sua disponibilidade em compartilhar suas vivências conosco. Sua sessão de escuta inicial foi concluída com sucesso e suas informações serão analisadas com o cuidado e a ética que lhe são devidos. Nossa equipe entrará em contato em breve para os próximos passos.")
 
 def gerar_relatorio_gpt(dados_paciente_temp):
+    # (Esta função permanece exatamente a mesma)
     historico_triagem = "Registro da Triagem:\n"
     for pergunta, resposta in dados_paciente_temp.items():
         if isinstance(pergunta, str) and isinstance(resposta, str):
@@ -224,29 +238,21 @@ def gerar_relatorio_gpt(dados_paciente_temp):
     Você é uma Inteligência Artificial auxiliar da Psicanalista Clínica Carla Viviane Guedes Ferreira (REDE ELLe).
     Sua tarefa é analisar as informações fornecidas por um paciente durante uma triagem inicial e gerar um 'EXAME PSÍQUICO com devolutiva Psicanalítica' conforme a estrutura fornecida.
     É fundamental que você preencha CADA seção do relatório com base nas respostas do paciente. Faça inferências e observações pertinentes onde for possível e necessário, mas deixe claro se uma informação é uma inferência ou se está ausente.
-
     Após o Exame Psíquico, inclua uma seção de "Perspectivas Teóricas Preliminares" aplicando brevemente lentes de Freud, Lacan, Winnicott e Ferenczi, onde pertinente, para sugerir possíveis dinâmicas. Contextualize a relevância do pensador à questão levantada, não apenas um resumo da teoria.
-
     Finalize com uma seção de "Sugestões de Intervenção e Atendimento" com base nos dados.
-
     ## Informações do Paciente e Respostas da Triagem:
     {historico_triagem}
-
     ## Estrutura do EXAME PSÍQUICO a ser preenchido:
-
     {EXAME_PSIQUICO_INSTRUCOES}
     Hipótese Diagnóstica final:
-
     ## Perspectivas Teóricas Preliminares:
     (Para cada teoria abaixo, analise as falas do paciente e ofereça uma breve perspectiva psicanalítica, conectando a teoria às experiências relatadas. Seja conciso e perspicaz. Se uma teoria não se aplicar ou exigir mais dados, mencione isso.)
     - **Sigmund Freud:**
     - **Jacques Lacan:**
     - **Donald Winnicott:**
     - **Sándor Ferenczi:**
-
     ## Sugestões de Intervenção e Atendimento:
     (Com base na triagem e nas perspectivas preliminares, aponte caminhos possíveis para a psicanalista Carla Viviane Guedes Ferreira, considerando focos terapêuticos e possíveis abordagens iniciais de acolhimento e elaboração.)
-
     Por favor, gere o relatório preenchendo as seções acima com base nas informações fornecidas. Seja conciso, mas completo e analítico.
     """
 
@@ -269,7 +275,6 @@ def gerar_relatorio_gpt(dados_paciente_temp):
 
 def save_report_internally(patient_data, raw_generated_report_content, email_sent_status, compiled_report_text_for_file_and_email):
     timestamp_for_db = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
     patient_name_for_file = "PacienteAnonimo"
     q1_data = patient_data.get("Pergunta 1: Qual seu nome, idade, whatsapp e cidade?", "")
     if q1_data:
@@ -280,11 +285,9 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
                 patient_name_for_file = "PacienteAnonimo"
 
     filename_full = f"relatorio_{patient_name_for_file}_{timestamp_for_db}.txt"
-    
     reports_dir = "relatorios_triagem"
     if not os.path.exists(reports_dir):
         os.makedirs(reports_dir)
-
     filepath = os.path.join(reports_dir, filename_full)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(compiled_report_text_for_file_and_email)
@@ -293,6 +296,7 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
     cursor = conn.cursor()
     patient_data_json = json.dumps(patient_data, ensure_ascii=False)
     risk_alert_status = "Sim" if patient_data.get("ALERTA_RISCO_IMEDIATO") == "Sim" else "Não"
+    report_content_to_save = raw_generated_report_content if raw_generated_report_content else "ERRO: O relatório da IA não foi gerado."
         
     cursor.execute("""
         INSERT INTO reports (timestamp, patient_name_for_file, patient_data, generated_report, risk_alert, email_sent)
@@ -301,49 +305,40 @@ def save_report_internally(patient_data, raw_generated_report_content, email_sen
         timestamp_for_db,
         patient_name_for_file,
         patient_data_json,
-        raw_generated_report_content,
+        report_content_to_save,
         risk_alert_status,
         1 if email_sent_status else 0
     ))
     conn.commit()
     conn.close()
-
-    # ADIÇÃO IMPORTANTE: Salva o banco de dados atualizado na nuvem
     upload_database()
-
     return filepath, compiled_report_text_for_file_and_email
 
 def send_report_email(subject, body, filepath=None):
+    # (Esta função permanece exatamente a mesma)
     if not SENDER_EMAIL or not SENDER_PASSWORD:
-        st.error("Credenciais de e-mail não configuradas no arquivo .env ou Secrets do Streamlit. Envio de e-mail falhou.")
+        st.error("Credenciais de e-mail não configuradas. Envio de e-mail falhou.")
         return False
-
     msg = EmailMessage()
     body_as_string = str(body) if body is not None else ""
-    
     if not body_as_string.strip():
-        st.error("O corpo do e-mail está vazio ou inválido. O envio foi abortado.")
+        st.error("O corpo do e-mail está vazio. O envio foi abortado.")
         return False
-
     msg['Subject'] = subject
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECEIVER_EMAIL
     msg.set_content(body_as_string)
-
     if filepath and os.path.exists(filepath):
         import mimetypes
         mimestart = mimetypes.guess_type(filepath)[0]
         if mimestart is not None:
             maintype, subtype = mimestart.split('/')
         else:
-            maintype = 'application'
-            subtype = 'octet-stream'
-
+            maintype, subtype = 'application', 'octet-stream'
         with open(filepath, 'rb') as f:
             file_data = f.read()
             file_name = os.path.basename(filepath)
         msg.add_attachment(file_data, maintype=maintype, subtype=subtype, filename=file_name)
-
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
@@ -357,6 +352,7 @@ def send_report_email(subject, body, filepath=None):
         return False
 
 def save_feedback_entry(report_id, feedback_text):
+    # (Esta função permanece exatamente a mesma)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -364,11 +360,10 @@ def save_feedback_entry(report_id, feedback_text):
                    (report_id, feedback_text, timestamp))
     conn.commit()
     conn.close()
-    
-    # ADIÇÃO IMPORTANTE: Salva o banco de dados atualizado na nuvem
     upload_database()
 
 def get_feedback_for_report(report_id):
+    # (Esta função permanece exatamente a mesma)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT feedback_text, timestamp FROM feedback WHERE report_id = ? ORDER BY timestamp DESC", (report_id,))
@@ -377,6 +372,7 @@ def get_feedback_for_report(report_id):
     return feedback_entries
 
 def get_reports_from_db():
+    # (Esta função permanece exatamente a mesma)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id, timestamp, patient_name_for_file, risk_alert, email_sent FROM reports ORDER BY timestamp DESC")
@@ -385,6 +381,7 @@ def get_reports_from_db():
     return reports_data
 
 def get_single_report_from_db(report_id):
+    # (Esta função permanece exatamente a mesma)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT patient_data, generated_report FROM reports WHERE id = ?", (report_id,))
@@ -398,23 +395,18 @@ def get_single_report_from_db(report_id):
 st.title("Psicanálise Digital com Escuta Ampliada – REDE ELLe")
 st.subheader("Seu espaço de acolhimento e escuta inicial")
 
-# --- Lógica de Segurança (Login) ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
-# --- Configuração e Exibição do Menu Principal ---
 st.sidebar.title("Navegação REDE ELLe")
-
 page_options = ["Triagem Inicial"]
 
 if not st.session_state["logged_in"]:
     st.sidebar.subheader("Login para Acesso Restrito")
     username_input = st.sidebar.text_input("Usuário", key="login_username_input")
     password_input = st.sidebar.text_input("Senha", type="password", key="login_password_input")
-    
     if st.sidebar.button("Entrar", key="login_button_sidebar"):
-        if (username_input == ADMIN_USERNAME_SECRET and
-            password_input == ADMIN_PASSWORD_SECRET):
+        if (username_input == ADMIN_USERNAME_SECRET and password_input == ADMIN_PASSWORD_SECRET):
             st.session_state["logged_in"] = True
             st.success("Login realizado com sucesso! Você pode acessar 'Visualizar Relatórios' agora.")
             st.rerun()
@@ -422,18 +414,13 @@ if not st.session_state["logged_in"]:
             st.session_state["logged_in"] = False
             st.error("Usuário ou senha incorretos. Por favor, tente novamente.")
             st.rerun()
-            
     st.session_state.current_page = "Triagem Inicial"
-
 else:
     page_options.append("Visualizar Relatórios")
-    
     if 'current_page' not in st.session_state or st.session_state.current_page not in page_options:
         st.session_state.current_page = "Triagem Inicial"
-
     selected_page = st.sidebar.radio("Escolha uma opção:", page_options, key="main_navigation_radio", index=page_options.index(st.session_state.current_page))
     st.session_state.current_page = selected_page
-
     st.sidebar.success(f"Logado como: {ADMIN_USERNAME_SECRET}")
     if st.sidebar.button("Sair", key="logout_button"):
         st.session_state["logged_in"] = False
@@ -450,7 +437,6 @@ if st.session_state.current_page == "Triagem Inicial":
         st.session_state.report_filepath = None
         st.session_state.report_content_for_email = None
         st.session_state.patient_first_name = None
-
     if st.session_state.triagem_flow_state == 'consent':
         st.markdown("### Por favor, leia o Termo de Consentimento Informado abaixo:")
         st.markdown(TERMO_CONSENTIMENTO)
@@ -460,28 +446,23 @@ if st.session_state.current_page == "Triagem Inicial":
             st.session_state.current_question_index = 0
             st.session_state.chat_history = []
             st.session_state.patient_first_name = None
-            
-            initial_ia_message = """Oi, boa noite. Eu sou uma IA de triagem da Rede ELLe, como você deve ter lido no termo de consentimento. Estou aqui para receber algumas informações suas e, logo após, farei um resumo para a Psicanalista Carla Viviane Guedes Ferreira, que entende melhor de casos como o que você me trará, certo?
+            initial_ia_message = """Olá. Sou a assistente de triagem da REDE ELLe. Como você leu no termo, nossa conversa inicial será registrada para que a Psicanalista Carla Ferreira possa dar continuidade ao seu atendimento da forma mais acolhedora possível.
 
-Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade? (Por favor responda o mais completo para um retorno positivo).
+Vamos começar? Para isso, preciso de alguns dados básicos.
+Qual seu nome, idade, whatsapp e cidade?
 """
             st.session_state.chat_history.append({"speaker": "IA", "text": initial_ia_message})
             st.rerun()
-
     elif st.session_state.triagem_flow_state == 'triagem_questions':
         for chat in st.session_state.chat_history:
             st.write(f"**{chat['speaker']}**: {chat['text']}")
-
         if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS):
             user_response = st.text_input("Paciente:", key=f"question_input_{st.session_state.current_question_index}")
-
             if user_response:
                 st.session_state.chat_history.append({"speaker": "Paciente", "text": user_response})
-                
                 question_just_answered_text = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
                 question_key_str = f"Pergunta {st.session_state.current_question_index+1}: {question_just_answered_text}"
                 st.session_state.dados_paciente[question_key_str] = user_response
-
                 if st.session_state.current_question_index == 0:
                     try:
                         first_name_match = user_response.split(',')[0].strip().split(' ')[0]
@@ -489,89 +470,57 @@ Então, vamos começar pelos seus dados. Qual seu nome, idade, whatsapp e cidade
                             st.session_state.patient_first_name = first_name_match
                     except:
                         st.session_state.patient_first_name = None
-
                 if checar_risco_imediato(user_response):
                     st.warning("!!! ATENÇÃO !!! Foi detectada uma fala relacionada a risco de suicídio ou homicídio.")
                     st.warning("Lembre-se do item 4 do Termo de Consentimento: 'A quebra de sigilo será feita em caso de falas sobre suicídio e homicídio do escutado.' É crucial que você procure ajuda profissional imediata.")
                     st.session_state.dados_paciente["ALERTA_RISCO_IMEDIATO"] = "Sim"
 
                 reflection_text_ia = ""
-                
                 if st.session_state.current_question_index == 0:
                     nome_paciente = st.session_state.patient_first_name if st.session_state.patient_first_name else "você"
-                    reflection_text_ia = f"{nome_paciente.capitalize()}, agradeço pela resposta. Os dados são registrados."
-                elif (st.session_state.current_question_index + 1) < len(TRIAGEM_PERGUNTAS):
-                    reflection_text_ia = get_triagem_reflection(user_response, question_just_answered_text, st.session_state.patient_first_name)
-                    
+                    reflection_text_ia = f"{nome_paciente.capitalize()}, agradeço pelo registro inicial."
+                else:
+                    reflection_text_ia = get_intuitive_reflection(user_response, question_just_answered_text)
+                
                 if reflection_text_ia:
                     st.session_state.chat_history.append({"speaker": "IA", "text": reflection_text_ia})
-
                 st.session_state.current_question_index += 1
-                
                 if st.session_state.current_question_index < len(TRIAGEM_PERGUNTAS):
                     next_question_from_list = TRIAGEM_PERGUNTAS[st.session_state.current_question_index]
-                    
-                    if st.session_state.patient_first_name:
-                        st.session_state.chat_history.append({"speaker": "IA", "text": f"Certo {st.session_state.patient_first_name.capitalize()}..."})
-                    else:
-                        st.session_state.chat_history.append({"speaker": "IA", "text": "Certo..."})
-                        
                     st.session_state.chat_history.append({"speaker": "IA", "text": next_question_from_list})
-                    
                 st.rerun()
-
         else:
-            st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço suas respostas. As informações coletadas são muito importantes."})
-            st.session_state.chat_history.append({"speaker": "IA", "text": "Agora estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Viviane Guedes Ferreira."})
-            st.session_state.chat_history.append({"speaker": "IA", "text": "Por favor, aguarde alguns instantes..."})
+            st.session_state.chat_history.append({"speaker": "IA", "text": "Agradeço por compartilhar suas respostas. Elas são muito importantes."})
+            st.session_state.chat_history.append({"speaker": "IA", "text": "Estou preparando um resumo e um exame psíquico preliminar para a Psicanalista Carla Ferreira. Por favor, aguarde um momento."})
             st.session_state.triagem_flow_state = 'generate_report'
             st.rerun()
-
     elif st.session_state.triagem_flow_state == 'generate_report':
         for chat in st.session_state.chat_history:
             st.write(f"**{chat['speaker']}**: {chat['text']}")
-
         relatorio_gerado = gerar_relatorio_gpt(st.session_state.dados_paciente)
-        
-        email_to_send_body = ""
-        if relatorio_gerado:
-            email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
-        else:
-            st.error("Desculpe, não foi possível gerar o relatório completo neste momento (erro da IA).")
-            email_to_send_body = "Um erro ocorreu e o relatório completo da triagem não pôde ser gerado pela IA. Por favor, entre em contato com o suporte da REDE ELLe."
-            
+        email_to_send_body = compile_full_report_text(st.session_state.dados_paciente, relatorio_gerado)
         email_subject = f"Relatório de Triagem REDE ELLe - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        
         email_successfully_sent = send_report_email(email_subject, email_to_send_body)
-                
         if email_successfully_sent:
-            st.success("Relatório gerado e enviado para seu e-mail!")
+            st.success("Relatório gerado e enviado para a análise da Psicanalista!")
         else:
-            st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail. Verifique as configurações de e-mail e os logs.")
-
-        st.session_state.report_filepath, _ = \
-            save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body)
-
-        with st.spinner("A IA está elaborando a mensagem final para você..."):
+            st.warning("Relatório gerado, mas houve um problema ao enviar o e-mail.")
+        st.session_state.report_filepath, _ = save_report_internally(st.session_state.dados_paciente, relatorio_gerado, email_successfully_sent, email_to_send_body)
+        with st.spinner("Estou elaborando uma mensagem final para você..."):
             patient_summary_final = get_final_patient_summary(st.session_state.dados_paciente)
         st.write(f"\n**IA**: {patient_summary_final}")
-        
         st.write("\nSessão de triagem encerrada. Obrigado(a) por sua participação.")
         st.session_state.triagem_flow_state = 'finished'
         st.rerun()
-
     elif st.session_state.triagem_flow_state == 'finished':
         for chat in st.session_state.chat_history:
             st.write(f"**{chat['speaker']}**: {chat['text']}")
         st.markdown("--- **Sessão Concluída** ---")
         st.info("Para iniciar uma nova sessão, atualize a página no navegador (F5) ou selecione 'Triagem Inicial' no menu.")
-
 elif st.session_state.current_page == "Visualizar Relatórios":
     st.header("Relatórios de Triagem da REDE ELLe (Acesso Restrito)")
     st.write("Aqui você pode visualizar e gerenciar todos os relatórios de triagem salvos.")
-
     reports_list = get_reports_from_db()
-
     if reports_list:
         display_data = []
         for report_id, timestamp, patient_name, risk_alert, email_sent in reports_list:
@@ -582,12 +531,9 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                 "Alerta de Risco": risk_alert,
                 "Email Enviado": "Sim" if email_sent == 1 else "Não"
             })
-            
         df = pd.DataFrame(display_data)
-
         st.subheader("Ferramentas de Busca e Filtro")
         col_search, col_risk, col_start_date, col_end_date = st.columns([2, 1, 1, 1])
-
         with col_search:
             search_query = st.text_input("Buscar por nome do paciente (anonimizado):", key="search_reports")
         with col_risk:
@@ -598,85 +544,60 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                 min_db_date = pd.to_datetime(df['Data/Hora'], format="%d/%m/%Y %H:%M:%S").min().date()
                 if min_db_date < default_start_date:
                     default_start_date = min_db_date
-
             start_date = st.date_input("Data de Início:", default_start_date, key="start_date_filter")
         with col_end_date:
             end_date = st.date_input("Data de Fim:", datetime.date.today(), key="end_date_filter")
-
+        
         filtered_df = df.copy()
-
         if search_query:
             filtered_df = filtered_df[filtered_df["Paciente (Nome-Arquivo)"].str.contains(search_query, case=False, na=False)]
         if risk_filter != "Todos":
             filtered_df = filtered_df[filtered_df["Alerta de Risco"] == risk_filter]
-
+        
         filtered_df['Data/Hora_dt'] = pd.to_datetime(filtered_df['Data/Hora'], format="%d/%m/%Y %H:%M:%S")
         filtered_df = filtered_df[(filtered_df['Data/Hora_dt'].dt.date >= start_date) & (filtered_df['Data/Hora_dt'].dt.date <= end_date)]
-        
         filtered_df = filtered_df.drop(columns=['Data/Hora_dt'])
-
+        
         st.subheader("Relatórios Filtrados")
         st.dataframe(filtered_df, use_container_width=True, hide_index=False)
-
+        
         csv_export = filtered_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Exportar Relatórios para CSV",
-            data=csv_export,
-            file_name="redeelle_relatorios_filtrados.csv",
-            mime="text/csv",
-            key="download_csv_button"
+            label="Exportar Relatórios para CSV", data=csv_export,
+            file_name="redeelle_relatorios_filtrados.csv", mime="text/csv", key="download_csv_button"
         )
-
         st.subheader("Visualizações Gráficas")
-
         if not filtered_df.empty:
             daily_counts = filtered_df['Data/Hora'].str.split(' ').str[0].value_counts().reset_index()
             daily_counts.columns = ['Data', 'Quantidade']
             daily_counts['Data'] = pd.to_datetime(daily_counts['Data'], format="%d/%m/%Y")
             daily_counts = daily_counts.sort_values('Data')
-
             chart_daily = alt.Chart(daily_counts).mark_line().encode(
                 x=alt.X('Data:T', title='Data'),
                 y=alt.Y('Quantidade:Q', title='Quantidade de Relatórios'),
                 tooltip=[alt.Tooltip('Data:T', format='%d/%m/%Y'), 'Quantidade:Q']
-            ).properties(
-                title='Número de Relatórios por Dia'
-            ).interactive()
+            ).properties(title='Número de Relatórios por Dia').interactive()
             st.altair_chart(chart_daily, use_container_width=True)
-
             risk_counts = filtered_df['Alerta de Risco'].value_counts().reset_index()
             risk_counts.columns = ['Alerta', 'Quantidade']
-
             chart_risk = alt.Chart(risk_counts).mark_arc().encode(
                 theta=alt.Theta(field="Quantidade", type="quantitative"),
                 color=alt.Color(field="Alerta", type="nominal", title="Alerta de Risco"),
                 tooltip=['Alerta', 'Quantidade']
-            ).properties(
-                title='Distribuição de Alertas de Risco'
-            )
+            ).properties(title='Distribuição de Alertas de Risco')
             st.altair_chart(chart_risk, use_container_width=True)
-
         else:
             st.info("Nenhum dado para exibir gráficos com os filtros atuais.")
-
-
         st.subheader("Visualizar Detalhes do Relatório Individual")
-        
         all_report_ids = [report[0] for report in reports_list]
         min_report_id = min(all_report_ids) if all_report_ids else 1
         max_report_id = max(all_report_ids) if all_report_ids else 1
-
         if 'report_id_input' not in st.session_state:
-            st.session_state.report_id_input = max_report_id if max_report_id > 0 else 1 
-        
+            st.session_state.report_id_input = max_report_id if max_report_id > 0 else 1
         report_to_view_id = st.number_input(
-            "Digite o ID do relatório para visualizar os detalhes:",  
-            min_value=min_report_id,  
-            max_value=max_report_id,  
-            format="%d",  
-            key="report_id_input"
+            "Digite o ID do relatório para visualizar os detalhes:",
+            min_value=min_report_id, max_value=max_report_id, format="%d", key="report_id_input"
         )
-        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Relatório Anterior", key="prev_report_button"):
@@ -690,8 +611,7 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                     report_to_view_id += 1
                     st.session_state.report_id_input = report_to_view_id
                     st.rerun()
-
-        if st.button("Ver Detalhes do Relatório", key="view_report_button_final"): 
+        if st.button("Ver Detalhes do Relatório", key="view_report_button_final"):
             if report_to_view_id:
                 patient_data_full, generated_report_full = get_single_report_from_db(report_to_view_id)
                 if patient_data_full:
@@ -699,61 +619,50 @@ elif st.session_state.current_page == "Visualizar Relatórios":
                     st.markdown("**Dados do Paciente (Triagem Completa):**")
                     for q, r in patient_data_full.items():
                         st.write(f"- **{q}**: {r}")
-                        
                     st.markdown("**Relatório de Exame Psíquico (IA):**")
                     st.markdown(generated_report_full)
                 else:
                     st.warning("Relatório não encontrado. Verifique o ID.")
             else:
                 st.warning("Por favor, insira um ID de relatório para visualizar.")
-
     else:
         st.info("Nenhum relatório de triagem encontrado até o momento.")
 
-    if st.session_state.get("logged_in", False): 
-        st.markdown("---") 
+    if st.session_state.get("logged_in", False):
+        st.markdown("---")
         st.subheader("Fornecer Feedback para um Relatório")
-
         def clear_feedback_text_area():
             if "feedback_text_area_input" in st.session_state:
                 st.session_state.feedback_text_area_input = ""
-        
         if 'feedback_report_id_form_input' not in st.session_state:
             if reports_list:
-                st.session_state.feedback_report_id_form_input = reports_list[0][0] 
+                st.session_state.feedback_report_id_form_input = reports_list[0][0]
             else:
-                 st.session_state.feedback_report_id_form_input = 1 
-
+                st.session_state.feedback_report_id_form_input = 1
         feedback_report_id = st.number_input(
             "ID do Relatório para Feedback:",
-            min_value=min_report_id if reports_list else 1, 
-            max_value=max_report_id if reports_list else 1, 
-            value=st.session_state.feedback_report_id_form_input, 
+            min_value=min_report_id if reports_list else 1,
+            max_value=max_report_id if reports_list else 1,
+            value=st.session_state.feedback_report_id_form_input,
             format="%d",
-            key="feedback_report_id_form_input" 
+            key="feedback_report_id_form_input"
         )
-
-        feedback_text_area_content = st.text_area( 
-            "Seu Feedback/Observação:",  
-            key="feedback_text_area_input" 
+        feedback_text_area_content = st.text_area(
+            "Seu Feedback/Observação:",
+            key="feedback_text_area_input"
         )
-
         def submit_feedback_and_clear():
-            current_feedback_report_id = st.session_state.get('feedback_report_id_form_input') 
-            current_feedback_text = st.session_state.get('feedback_text_area_input') 
-
-            if current_feedback_report_id is not None and current_feedback_text: 
+            current_feedback_report_id = st.session_state.get('feedback_report_id_form_input')
+            current_feedback_text = st.session_state.get('feedback_text_area_input')
+            if current_feedback_report_id is not None and current_feedback_text:
                 save_feedback_entry(current_feedback_report_id, current_feedback_text)
                 st.success(f"Feedback para o relatório ID {current_feedback_report_id} salvo com sucesso!")
-                clear_feedback_text_area() 
+                clear_feedback_text_area()
             else:
                 st.warning("Por favor, digite um ID de relatório e seu feedback antes de salvar.")
-
         st.button("Salvar Feedback", on_click=submit_feedback_and_clear, key="save_feedback_button")
-
         st.subheader(f"Feedbacks Registrados para o Relatório ID {feedback_report_id}")
-        
-        current_report_feedbacks = get_feedback_for_report(feedback_report_id) 
+        current_report_feedbacks = get_feedback_for_report(feedback_report_id)
         if current_report_feedbacks:
             for fb_text, fb_timestamp in current_report_feedbacks:
                 formatted_timestamp = datetime.datetime.strptime(fb_timestamp, '%Y%m%d_%H%M%S').strftime('%d/%m/%Y %H:%M:%S')
